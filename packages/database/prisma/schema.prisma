@@ -1,0 +1,244 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MembershipRole {
+  ADMIN
+  MEMBER
+}
+
+enum PlanTier {
+  FREE
+  STARTER
+  PRO
+  BUSINESS
+}
+
+enum AiProvider {
+  OPENAI
+  ANTHROPIC
+  GOOGLE
+  XAI
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  passwordHash    String
+  name            String
+  emailVerifiedAt DateTime?
+  sessionVersion  Int      @default(0)
+
+  activeOrganizationId String?
+  activeOrganization   Organization? @relation("ActiveOrg", fields: [activeOrganizationId], references: [id], onDelete: SetNull)
+
+  memberships     Membership[]
+  conversations   Conversation[]
+  auditLogs       AuditLog[]       @relation("AuditActor")
+  sentInvites     Invite[]         @relation("InviteSender")
+  refreshTokens   RefreshToken[]
+  organizationsApiKeyAdded Organization[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+}
+
+model Organization {
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
+
+  planTier  PlanTier @default(FREE)
+  maxMembers Int     @default(3)
+
+  apiKeyCiphertext String?
+  apiKeyIv         String?
+  apiKeyProvider   AiProvider?
+  defaultModel     String?
+  apiKeyAddedAt    DateTime?
+  apiKeyAddedById  String?
+  apiKeyAddedBy    User?    @relation(fields: [apiKeyAddedById], references: [id], onDelete: SetNull)
+
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+  subscriptionStatus   String?
+
+  memberships   Membership[]
+  conversations Conversation[]
+  invites       Invite[]
+  auditLogs     AuditLog[]
+  activeUsers   User[]        @relation("ActiveOrg")
+  stripeEvents  StripeEvent[]
+  usageLogs     UsageLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slug])
+}
+
+model Membership {
+  id             String         @id @default(cuid())
+  userId         String
+  organizationId String
+  role           MembershipRole @default(MEMBER)
+
+  spendLimitCents     Int?     @default(0)
+  spendUsedCents       Int     @default(0)
+  spendPeriodStartedAt DateTime @default(now())
+
+  suspended Boolean @default(false)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@index([userId])
+}
+
+model Invite {
+  id             String       @id @default(cuid())
+  email          String
+  organizationId String
+  role           MembershipRole @default(MEMBER)
+  status         InviteStatus @default(PENDING)
+  token          String       @unique
+
+  invitedById String
+  invitedBy   User   @relation("InviteSender", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+model Conversation {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+
+  title    String  @default("New Conversation")
+  provider AiProvider
+  model    String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  messages  Message[]
+  usageLogs UsageLog[]
+
+  isArchived Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, userId])
+  @@index([organizationId, userId, updatedAt])
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String
+  role           MessageRole
+
+  content String @db.Text
+  metadata Json?
+
+  promptTokens     Int?
+  completionTokens Int?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+model UsageLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  conversationId String?
+
+  provider         AiProvider
+  model            String
+  promptTokens     Int
+  completionTokens Int
+  estimatedCostCents Int
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, userId, createdAt])
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  actorId        String?
+
+  action  String
+  details Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  revokedAt DateTime?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model StripeEvent {
+  id             String   @id
+  organizationId String?
+  type           String
+  processedAt    DateTime @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([type])
+}
