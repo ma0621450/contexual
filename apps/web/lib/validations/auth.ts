@@ -25,8 +25,9 @@ export const createOrganizationSchema = z.object({
   name: z
     .string()
     .trim()
-    .min(1, 'Organization name is required')
-    .max(100),
+    .min(2, 'Organization name must be at least 2 characters')
+    .max(100, 'Organization name must be at most 100 characters')
+    .regex(/[A-Za-z0-9]/, 'Organization name must include letters or numbers'),
 });
 
 export const joinOrganizationSchema = z.object({

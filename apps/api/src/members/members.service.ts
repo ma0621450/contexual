@@ -1,0 +1,482 @@
+import { randomBytes } from 'crypto';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InviteStatus, MembershipRole, PlanTier } from '@contexual/database';
+import { AuditService } from '../audit/audit.service';
+import { PrismaService } from '../database/prisma.service';
+import { getPlanLimits } from '../organizations/plan-limits';
+
+const INVITE_EXPIRY_DAYS = 7;
+
+@Injectable()
+export class MembersService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+  ) {}
+
+  async getOverview(organizationId: string) {
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, name: true, slug: true, planTier: true },
+    });
+
+    if (!organization) {
+      throw new NotFoundException('Organization not found');
+    }
+
+    const maxMembers = getPlanLimits(organization.planTier).maxMembers;
+
+    const [memberCount, pendingInvites] = await Promise.all([
+      this.prisma.membership.count({ where: { organizationId } }),
+      this.prisma.invite.count({
+        where: { organizationId, status: InviteStatus.PENDING },
+      }),
+    ]);
+
+    return {
+      id: organization.id,
+      name: organization.name,
+      slug: organization.slug,
+      planTier: organization.planTier,
+      maxMembers,
+      memberCount,
+      pendingInvites,
+      seatsRemaining: Math.max(maxMembers - memberCount - pendingInvites, 0),
+    };
+  }
+
+  async listMembers(organizationId: string) {
+    const memberships = await this.prisma.membership.findMany({
+      where: { organizationId },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return memberships.map((membership) => ({
+      membershipId: membership.id,
+      userId: membership.userId,
+      name: membership.user.name,
+      email: membership.user.email,
+      role: membership.role,
+      suspended: membership.suspended,
+      joinedAt: membership.createdAt,
+    }));
+  }
+
+  async listInvites(organizationId: string) {
+    const invites = await this.prisma.invite.findMany({
+      where: { organizationId, status: InviteStatus.PENDING },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return invites.map((invite) => ({
+      id: invite.id,
+      email: invite.email,
+      role: invite.role,
+      token: invite.token,
+      expiresAt: invite.expiresAt,
+      createdAt: invite.createdAt,
+    }));
+  }
+
+  async createInvite(
+    organizationId: string,
+    invitedById: string,
+    email: string,
+    role: MembershipRole = MembershipRole.MEMBER,
+  ) {
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+
+    if (!organization) {
+      throw new NotFoundException('Organization not found');
+    }
+
+    const normalizedEmail = email.toLowerCase();
+
+    const existingMember = await this.prisma.membership.findFirst({
+      where: { organizationId, user: { email: normalizedEmail } },
+    });
+
+    if (existingMember) {
+      throw new ConflictException(
+        'This person is already a member of the organization',
+      );
+    }
+
+    const existingInvite = await this.prisma.invite.findFirst({
+      where: {
+        organizationId,
+        email: normalizedEmail,
+        status: InviteStatus.PENDING,
+      },
+    });
+
+    if (existingInvite) {
+      throw new ConflictException(
+        'An invitation is already pending for this email',
+      );
+    }
+
+    await this.assertSeatAvailable(organizationId, organization.planTier);
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + INVITE_EXPIRY_DAYS);
+
+    const invite = await this.prisma.invite.create({
+      data: {
+        email: normalizedEmail,
+        organizationId,
+        role,
+        token: randomBytes(32).toString('base64url'),
+        invitedById,
+        expiresAt,
+      },
+    });
+
+    await this.auditService.record({
+      organizationId,
+      actorId: invitedById,
+      action: 'invite.created',
+      details: { email: normalizedEmail, role },
+    });
+
+    return {
+      id: invite.id,
+      email: invite.email,
+      role: invite.role,
+      token: invite.token,
+      expiresAt: invite.expiresAt,
+      createdAt: invite.createdAt,
+    };
+  }
+
+  async revokeInvite(organizationId: string, inviteId: string) {
+    const invite = await this.prisma.invite.findUnique({
+      where: { id: inviteId },
+    });
+
+    if (!invite || invite.organizationId !== organizationId) {
+      throw new NotFoundException('Invite not found');
+    }
+
+    if (invite.status !== InviteStatus.PENDING) {
+      throw new ConflictException('This invite is no longer pending');
+    }
+
+    await this.prisma.invite.update({
+      where: { id: inviteId },
+      data: { status: InviteStatus.REVOKED },
+    });
+
+    await this.auditService.record({
+      organizationId,
+      actorId: invite.invitedById,
+      action: 'invite.revoked',
+      details: { email: invite.email },
+    });
+
+    return { ok: true };
+  }
+
+  async changeRole(
+    organizationId: string,
+    actingUserId: string,
+    targetUserId: string,
+    role: MembershipRole,
+  ) {
+    const membership = await this.getMembershipOrThrow(
+      organizationId,
+      targetUserId,
+    );
+
+    if (membership.role === role) {
+      return { ok: true };
+    }
+
+    if (
+      membership.role === MembershipRole.ADMIN &&
+      role === MembershipRole.MEMBER
+    ) {
+      await this.assertNotLastAdmin(organizationId, targetUserId);
+    }
+
+    await this.prisma.membership.update({
+      where: { id: membership.id },
+      data: { role },
+    });
+
+    await this.auditService.record({
+      organizationId,
+      actorId: actingUserId,
+      action: 'member.role_changed',
+      details: { targetUserId, role },
+    });
+
+    return { ok: true };
+  }
+
+  async removeMember(
+    organizationId: string,
+    actingUserId: string,
+    targetUserId: string,
+  ) {
+    if (actingUserId === targetUserId) {
+      throw new BadRequestException(
+        'You cannot remove yourself from the organization',
+      );
+    }
+
+    const membership = await this.getMembershipOrThrow(
+      organizationId,
+      targetUserId,
+    );
+
+    if (membership.role === MembershipRole.ADMIN) {
+      await this.assertNotLastAdmin(organizationId, targetUserId);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.membership.delete({ where: { id: membership.id } });
+
+      await tx.user.updateMany({
+        where: { id: targetUserId, activeOrganizationId: organizationId },
+        data: { activeOrganizationId: null },
+      });
+
+      await tx.user.update({
+        where: { id: targetUserId },
+        data: { sessionVersion: { increment: 1 } },
+      });
+    });
+
+    await this.auditService.record({
+      organizationId,
+      actorId: actingUserId,
+      action: 'member.removed',
+      details: { targetUserId },
+    });
+
+    return { ok: true };
+  }
+
+  async suspendMember(
+    organizationId: string,
+    actingUserId: string,
+    targetUserId: string,
+    suspended: boolean,
+  ) {
+    if (actingUserId === targetUserId) {
+      throw new BadRequestException('You cannot suspend your own access');
+    }
+
+    const membership = await this.getMembershipOrThrow(
+      organizationId,
+      targetUserId,
+    );
+
+    if (membership.suspended === suspended) {
+      return { ok: true };
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.membership.update({
+        where: { id: membership.id },
+        data: { suspended },
+      });
+
+      await tx.user.update({
+        where: { id: targetUserId },
+        data: { sessionVersion: { increment: 1 } },
+      });
+    });
+
+    await this.auditService.record({
+      organizationId,
+      actorId: actingUserId,
+      action: suspended ? 'member.suspended' : 'member.reinstated',
+      details: { targetUserId },
+    });
+
+    return { ok: true };
+  }
+
+  async changePlan(
+    organizationId: string,
+    actingUserId: string,
+    planTier: PlanTier,
+  ) {
+    const maxMembers = getPlanLimits(planTier).maxMembers;
+
+    const currentMembers = await this.prisma.membership.count({
+      where: { organizationId },
+    });
+
+    if (currentMembers > maxMembers) {
+      throw new BadRequestException(
+        `This plan allows ${maxMembers} members but the organization has ${currentMembers}. Remove members before downgrading.`,
+      );
+    }
+
+    await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: { planTier, maxMembers },
+    });
+
+    await this.auditService.record({
+      organizationId,
+      actorId: actingUserId,
+      action: 'plan.changed',
+      details: { planTier, maxMembers },
+    });
+
+    return { ok: true, planTier, maxMembers };
+  }
+
+  async setSpendLimit(
+    organizationId: string,
+    actingUserId: string,
+    targetUserId: string,
+    limitCents: number,
+  ) {
+    const membership = await this.getMembershipOrThrow(
+      organizationId,
+      targetUserId,
+    );
+
+    await this.prisma.membership.update({
+      where: { id: membership.id },
+      data: { spendLimitCents: limitCents },
+    });
+
+    await this.auditService.record({
+      organizationId,
+      actorId: actingUserId,
+      action: 'member.spend_limit_set',
+      details: { targetUserId, limitCents },
+    });
+
+    return { ok: true, limitCents };
+  }
+
+  async getUsage(organizationId: string) {
+    const [aggregate, perMember, memberships] = await Promise.all([
+      this.prisma.usageLog.aggregate({
+        where: { organizationId },
+        _sum: {
+          promptTokens: true,
+          completionTokens: true,
+          estimatedCostCents: true,
+        },
+      }),
+      this.prisma.usageLog.groupBy({
+        by: ['userId'],
+        where: { organizationId },
+        _sum: {
+          promptTokens: true,
+          completionTokens: true,
+          estimatedCostCents: true,
+        },
+      }),
+      this.prisma.membership.findMany({
+        where: { organizationId },
+        include: { user: { select: { id: true, name: true, email: true } } },
+      }),
+    ]);
+
+    const usageByUser = new Map(perMember.map((row) => [row.userId, row._sum]));
+
+    return {
+      totals: {
+        promptTokens: aggregate._sum.promptTokens ?? 0,
+        completionTokens: aggregate._sum.completionTokens ?? 0,
+        estimatedCostCents: aggregate._sum.estimatedCostCents ?? 0,
+      },
+      members: memberships.map((membership) => {
+        const usage = usageByUser.get(membership.userId);
+        return {
+          userId: membership.userId,
+          name: membership.user.name,
+          email: membership.user.email,
+          role: membership.role,
+          suspended: membership.suspended,
+          spendLimitCents: membership.spendLimitCents,
+          spendUsedCents: membership.spendUsedCents,
+          promptTokens: usage?.promptTokens ?? 0,
+          completionTokens: usage?.completionTokens ?? 0,
+          estimatedCostCents: usage?.estimatedCostCents ?? 0,
+        };
+      }),
+    };
+  }
+
+  async listAuditLogs(organizationId: string) {
+    const logs = await this.auditService.list(organizationId);
+
+    return logs.map((log) => ({
+      id: log.id,
+      action: log.action,
+      details: log.details,
+      actorName: log.actor?.name ?? null,
+      actorEmail: log.actor?.email ?? null,
+      createdAt: log.createdAt,
+    }));
+  }
+
+  private async getMembershipOrThrow(organizationId: string, userId: string) {
+    const membership = await this.prisma.membership.findUnique({
+      where: { userId_organizationId: { userId, organizationId } },
+    });
+
+    if (!membership) {
+      throw new NotFoundException('Member not found in this organization');
+    }
+
+    return membership;
+  }
+
+  private async assertNotLastAdmin(organizationId: string, userId: string) {
+    const otherAdmins = await this.prisma.membership.count({
+      where: {
+        organizationId,
+        role: MembershipRole.ADMIN,
+        userId: { not: userId },
+      },
+    });
+
+    if (otherAdmins === 0) {
+      throw new ForbiddenException(
+        'The organization must have at least one admin',
+      );
+    }
+  }
+
+  private async assertSeatAvailable(
+    organizationId: string,
+    planTier: PlanTier,
+  ) {
+    const maxMembers = getPlanLimits(planTier).maxMembers;
+
+    const [memberCount, pendingInvites] = await Promise.all([
+      this.prisma.membership.count({ where: { organizationId } }),
+      this.prisma.invite.count({
+        where: { organizationId, status: InviteStatus.PENDING },
+      }),
+    ]);
+
+    if (memberCount + pendingInvites >= maxMembers) {
+      throw new ForbiddenException(
+        `Your plan allows up to ${maxMembers} members. Upgrade your plan to invite more.`,
+      );
+    }
+  }
+}

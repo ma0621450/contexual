@@ -28,6 +28,11 @@ import type { AuthUser } from './auth.types';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  private getRefreshTokenFromRequest(req: Request): string | undefined {
+    const rawToken: unknown = req.cookies?.[REFRESH_TOKEN_COOKIE];
+    return typeof rawToken === 'string' ? rawToken : undefined;
+  }
+
   @Post('register')
   async register(
     @Body() dto: RegisterDto,
@@ -40,10 +45,11 @@ export class AuthController {
   @UseGuards(LocalAuthGuard)
   @HttpCode(200)
   async login(
-    @Body() _dto: LoginDto,
+    @Body() dto: LoginDto,
     @CurrentUser() user: AuthUser,
     @Res({ passthrough: true }) res: Response,
   ) {
+    void dto;
     return this.authService.login(user, res);
   }
 
@@ -64,16 +70,13 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.refresh(req.cookies?.[REFRESH_TOKEN_COOKIE], res);
+    return this.authService.refresh(this.getRefreshTokenFromRequest(req), res);
   }
 
   @Post('logout')
   @HttpCode(200)
-  async logout(
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    return this.authService.logout(req.cookies?.[REFRESH_TOKEN_COOKIE], res);
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    return this.authService.logout(this.getRefreshTokenFromRequest(req), res);
   }
 
   @Get('me')
@@ -85,7 +88,8 @@ export class AuthController {
   // TODO: Generate reset token, persist it, and send reset email.
   @Post('forgot-password')
   @HttpCode(200)
-  forgotPassword(@Body() _dto: ForgotPasswordDto) {
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    void dto;
     return {
       message:
         'If an account exists for this email, a reset link will be sent.',
@@ -94,7 +98,8 @@ export class AuthController {
 
   // TODO: Validate reset token from email and update user password hash.
   @Post('reset-password')
-  resetPassword(@Body() _dto: ResetPasswordDto) {
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    void dto;
     throw new NotImplementedException('Password reset is not implemented yet');
   }
 }

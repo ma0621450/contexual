@@ -6,16 +6,19 @@ import {
 } from '@nestjs/common';
 import { InviteStatus, PlanTier } from '@contexual/database';
 import type { Response } from 'express';
-import { AuthService } from '../auth/auth.service';
 import { PrismaService } from '../database/prisma.service';
 import type { AuthUser } from '../auth/auth.types';
 import { generateUniqueOrganizationSlug } from './onboarding.utils';
+import { getPlanLimits } from '../organizations/plan-limits';
+import { SessionsService } from '../sessions/sessions.service';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class OnboardingService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly authService: AuthService,
+    private readonly usersService: UsersService,
+    private readonly sessionsService: SessionsService,
   ) {}
 
   async createOrganization(user: AuthUser, name: string, res: Response) {
@@ -23,8 +26,10 @@ export class OnboardingService {
       throw new ForbiddenException('Email verification required');
     }
 
+    const normalizedName = name.trim();
+
     const slug = await generateUniqueOrganizationSlug(
-      name,
+      normalizedName,
       async (candidate) => {
         const existing = await this.prisma.organization.findUnique({
           where: { slug: candidate },
@@ -36,7 +41,7 @@ export class OnboardingService {
     await this.prisma.$transaction(async (tx) => {
       const organization = await tx.organization.create({
         data: {
-          name,
+          name: normalizedName,
           slug,
           planTier: PlanTier.FREE,
         },
@@ -56,12 +61,10 @@ export class OnboardingService {
       });
     });
 
-    const updatedUser = await this.prisma.user.findUniqueOrThrow({
-      where: { id: user.id },
-      include: { memberships: { select: { id: true } } },
-    });
-
-    await this.authService.issueSession(updatedUser, res);
+    const updatedUser = await this.usersService.findByIdWithMembershipsOrThrow(
+      user.id,
+    );
+    await this.sessionsService.createSession(updatedUser, res);
 
     return { redirectTo: '/dashboard' };
   }
@@ -107,7 +110,19 @@ export class OnboardingService {
       );
     }
 
+    const maxMembers = getPlanLimits(invite.organization.planTier).maxMembers;
+
     await this.prisma.$transaction(async (tx) => {
+      const memberCount = await tx.membership.count({
+        where: { organizationId: invite.organizationId },
+      });
+
+      if (memberCount >= maxMembers) {
+        throw new ForbiddenException(
+          'This organization has reached its member limit',
+        );
+      }
+
       await tx.membership.create({
         data: {
           userId: user.id,
@@ -127,12 +142,10 @@ export class OnboardingService {
       });
     });
 
-    const updatedUser = await this.prisma.user.findUniqueOrThrow({
-      where: { id: user.id },
-      include: { memberships: { select: { id: true } } },
-    });
-
-    await this.authService.issueSession(updatedUser, res);
+    const updatedUser = await this.usersService.findByIdWithMembershipsOrThrow(
+      user.id,
+    );
+    await this.sessionsService.createSession(updatedUser, res);
 
     return {
       redirectTo: '/dashboard',

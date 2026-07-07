@@ -1,0 +1,56 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { MembershipRole } from '@contexual/database';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { AuthUser } from '../auth/auth.types';
+import { ActiveOrg } from '../common/decorators/active-org.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { ConnectProviderDto } from './dto/providers.dto';
+import { ProvidersService } from './providers.service';
+
+@Controller('organizations/providers')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class ProvidersController {
+  constructor(private readonly providersService: ProvidersService) {}
+
+  @Get()
+  getStatus(@ActiveOrg() organizationId: string) {
+    return this.providersService.getStatus(organizationId);
+  }
+
+  @Post()
+  @Roles(MembershipRole.ADMIN)
+  @HttpCode(200)
+  connect(
+    @ActiveOrg() organizationId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: ConnectProviderDto,
+  ) {
+    return this.providersService.connect(
+      organizationId,
+      user.id,
+      dto.provider,
+      dto.apiKey,
+      dto.defaultModel,
+    );
+  }
+
+  @Delete()
+  @Roles(MembershipRole.ADMIN)
+  @HttpCode(200)
+  disconnect(
+    @ActiveOrg() organizationId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.providersService.disconnect(organizationId, user.id);
+  }
+}

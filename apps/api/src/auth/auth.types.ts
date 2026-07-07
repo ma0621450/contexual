@@ -1,3 +1,5 @@
+import type { MembershipRole } from '@contexual/database';
+
 export const ACCESS_TOKEN_COOKIE = 'contexual_access_token';
 export const REFRESH_TOKEN_COOKIE = 'contexual_refresh_token';
 
@@ -9,11 +11,34 @@ export type AccessTokenPayload = {
   sessionVersion: number;
 };
 
+export type AuthMembership = {
+  id: string;
+  organizationId: string;
+  role: MembershipRole;
+};
+
 export type AuthUser = {
   id: string;
   email: string;
   name: string;
   emailVerifiedAt: Date | null;
   sessionVersion: number;
-  memberships: { id: string }[];
+  activeOrganizationId: string | null;
+  memberships: AuthMembership[];
 };
+
+export type AuthUserWithPassword = AuthUser & {
+  passwordHash: string;
+};
+
+export function getActiveMembership(user: AuthUser): AuthMembership | null {
+  if (!user.activeOrganizationId) {
+    return null;
+  }
+
+  return (
+    user.memberships.find(
+      (membership) => membership.organizationId === user.activeOrganizationId,
+    ) ?? null
+  );
+}

@@ -12,6 +12,18 @@ import { FormField } from '@/components/auth/FormField';
 import { StepIndicator } from '@/components/auth/StepIndicator';
 
 type OnboardingStep = 'choice' | 'create' | 'join' | 'invite-confirm';
+const ORG_NAME_LIMIT = 100;
+
+function getOrganizationSlugPreview(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+
+  return slug || 'your-workspace';
+}
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -80,6 +92,8 @@ export default function OnboardingPage() {
 
   async function handleCreateOrganization(event: React.FormEvent) {
     event.preventDefault();
+    if (loading) return;
+
     setFormError('');
     setFieldErrors({});
 
@@ -90,25 +104,32 @@ export default function OnboardingPage() {
     }
 
     setLoading(true);
-    const result = await apiFetch<{ redirectTo?: string }>(
-      '/onboarding/create-organization',
-      {
-        method: 'POST',
-        body: JSON.stringify(parsed.data),
-      },
-    );
-    setLoading(false);
+    try {
+      const result = await apiFetch<{ redirectTo?: string }>(
+        '/onboarding/create-organization',
+        {
+          method: 'POST',
+          body: JSON.stringify(parsed.data),
+        },
+      );
 
-    if (!result.ok) {
-      setFormError(result.error);
-      return;
+      if (!result.ok) {
+        setFormError(result.error);
+        return;
+      }
+
+      router.push(result.data.redirectTo ?? '/dashboard');
+      router.refresh();
+    } catch {
+      setFormError('Unable to create organization. Check your connection and try again.');
+    } finally {
+      setLoading(false);
     }
-
-    router.push(result.data.redirectTo ?? '/dashboard');
-    router.refresh();
   }
 
   async function handleJoinOrganization(token: string) {
+    if (loading) return;
+
     setFormError('');
     setFieldErrors({});
 
@@ -119,22 +140,27 @@ export default function OnboardingPage() {
     }
 
     setLoading(true);
-    const result = await apiFetch<{ redirectTo?: string }>(
-      '/onboarding/join-organization',
-      {
-        method: 'POST',
-        body: JSON.stringify(parsed.data),
-      },
-    );
-    setLoading(false);
+    try {
+      const result = await apiFetch<{ redirectTo?: string }>(
+        '/onboarding/join-organization',
+        {
+          method: 'POST',
+          body: JSON.stringify(parsed.data),
+        },
+      );
 
-    if (!result.ok) {
-      setFormError(result.error);
-      return;
+      if (!result.ok) {
+        setFormError(result.error);
+        return;
+      }
+
+      router.push(result.data.redirectTo ?? '/dashboard');
+      router.refresh();
+    } catch {
+      setFormError('Unable to join organization. Check your connection and try again.');
+    } finally {
+      setLoading(false);
     }
-
-    router.push(result.data.redirectTo ?? '/dashboard');
-    router.refresh();
   }
 
   async function handleJoinSubmit(event: React.FormEvent) {
@@ -199,17 +225,29 @@ export default function OnboardingPage() {
             <form onSubmit={handleCreateOrganization} className="space-y-5">
               <FormField
                 label="Organization name"
-                name="organizationName"
+                name="name"
                 value={organizationName}
-                onChange={(event) => setOrganizationName(event.target.value)}
+                onChange={(event) => {
+                  setOrganizationName(event.target.value);
+                  setFieldErrors((prev) => ({ ...prev, name: '' }));
+                }}
                 error={fieldErrors.name}
                 placeholder="Acme Inc."
+                maxLength={ORG_NAME_LIMIT}
+                autoFocus
               />
+              <div className="space-y-1 text-xs text-text-muted">
+                <p>
+                  Workspace URL preview: <span className="font-medium">{getOrganizationSlugPreview(organizationName)}</span>
+                </p>
+                <p>{organizationName.trim().length}/{ORG_NAME_LIMIT} characters</p>
+              </div>
 
               <div className="flex gap-3">
                 <button
                   type="button"
                   onClick={goToChoice}
+                  disabled={loading}
                   className="inline-flex flex-1 items-center justify-center rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-brand-tint/40"
                 >
                   Back
@@ -227,7 +265,10 @@ export default function OnboardingPage() {
                 label="Invite code"
                 name="inviteCode"
                 value={inviteCode}
-                onChange={(event) => setInviteCode(event.target.value)}
+                onChange={(event) => {
+                  setInviteCode(event.target.value);
+                  setFieldErrors((prev) => ({ ...prev, token: '' }));
+                }}
                 error={fieldErrors.token}
                 placeholder="Paste your invite token"
               />
@@ -236,6 +277,7 @@ export default function OnboardingPage() {
                 <button
                   type="button"
                   onClick={goToChoice}
+                  disabled={loading}
                   className="inline-flex flex-1 items-center justify-center rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-brand-tint/40"
                 >
                   Back
