@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { apiFetch } from '@/lib/api/client';
+import { streamChat, apiFetch } from '@/lib/api/client';
 import type {
   ChatMessage,
   ConversationDetail,
@@ -13,12 +13,6 @@ type ChatClientProps = {
   initialConversations: ConversationSummary[];
   providerConnected: boolean;
   isAdmin: boolean;
-};
-
-type SendMessageResponse = {
-  conversationId: string;
-  title: string;
-  message: ChatMessage;
 };
 
 let tempIdCounter = 0;
@@ -79,48 +73,82 @@ export function ChatClient({
     setSending(true);
 
     const optimisticUser: ChatMessage = {
-      id: `temp-${tempIdCounter++}`,
+      id: `temp-user-${tempIdCounter++}`,
       role: 'USER',
       content,
       createdAt: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, optimisticUser]);
+    const streamingAssistantId = `temp-assistant-${tempIdCounter++}`;
+    const streamingAssistant: ChatMessage = {
+      id: streamingAssistantId,
+      role: 'ASSISTANT',
+      content: '',
+      createdAt: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, optimisticUser, streamingAssistant]);
     setInput('');
 
     try {
-      const result = await apiFetch<SendMessageResponse>('/chat/messages', {
-        method: 'POST',
-        body: JSON.stringify({
+      const result = await streamChat(
+        {
           conversationId: activeId ?? undefined,
           content,
-        }),
-      });
+        },
+        (event) => {
+          if (event.type === 'token') {
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === streamingAssistantId
+                  ? { ...message, content: message.content + event.content }
+                  : message,
+              ),
+            );
+          }
+
+          if (event.type === 'done') {
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === streamingAssistantId
+                  ? event.message
+                  : message,
+              ),
+            );
+
+            if (!activeId) {
+              setActiveId(event.conversationId);
+              setConversations((prev) => [
+                {
+                  id: event.conversationId,
+                  title: event.title,
+                  model: '',
+                  provider: 'OPENAI',
+                  updatedAt: new Date().toISOString(),
+                },
+                ...prev,
+              ]);
+            }
+          }
+        },
+      );
 
       if (!result.ok) {
         setError(result.error);
-        setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id));
+        setMessages((prev) =>
+          prev.filter(
+            (m) =>
+              m.id !== optimisticUser.id && m.id !== streamingAssistantId,
+          ),
+        );
         setInput(content);
-        return;
-      }
-
-      setMessages((prev) => [...prev, result.data.message]);
-
-      if (!activeId) {
-        setActiveId(result.data.conversationId);
-        setConversations((prev) => [
-          {
-            id: result.data.conversationId,
-            title: result.data.title,
-            model: '',
-            provider: 'OPENAI',
-            updatedAt: new Date().toISOString(),
-          },
-          ...prev,
-        ]);
       }
     } catch {
       setError('Unable to send message. Check your connection.');
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id));
+      setMessages((prev) =>
+        prev.filter(
+          (m) => m.id !== optimisticUser.id && m.id !== streamingAssistantId,
+        ),
+      );
       setInput(content);
     } finally {
       setSending(false);
@@ -198,18 +226,12 @@ export function ChatClient({
                       : 'bg-surface-page text-text-primary'
                   }`}
                 >
-                  {message.content}
+                  {message.content ||
+                    (sending && message.role === 'ASSISTANT' ? '…' : '')}
                 </div>
               </div>
             ))
           )}
-          {sending ? (
-            <div className="flex justify-start">
-              <div className="rounded-2xl bg-surface-page px-4 py-2.5 text-sm text-text-muted">
-                Thinking...
-              </div>
-            </div>
-          ) : null}
         </div>
 
         {error ? (

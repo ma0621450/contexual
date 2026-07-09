@@ -1,12 +1,17 @@
 import { redirect } from 'next/navigation';
 import {
+  getBillingStatus,
   getCurrentUser,
   getTeamOverview,
   getUsage,
 } from '@/lib/api/server';
 import { UsageClient } from './UsageClient';
 
-export default async function UsagePage() {
+type UsagePageProps = {
+  searchParams: Promise<{ billing?: string }>;
+};
+
+export default async function UsagePage({ searchParams }: UsagePageProps) {
   const user = await getCurrentUser();
 
   if (!user) {
@@ -25,13 +30,26 @@ export default async function UsagePage() {
     redirect('/dashboard');
   }
 
-  const [usage, overview] = await Promise.all([getUsage(), getTeamOverview()]);
+  const params = await searchParams;
+  const [usage, overview, billing] = await Promise.all([
+    getUsage(),
+    getTeamOverview(),
+    getBillingStatus(),
+  ]);
 
   return (
     <UsageClient
       usage={usage}
       overview={overview}
+      billing={billing}
       currentUserId={user.id}
+      billingNotice={
+        params.billing === 'success'
+          ? 'Payment received. Your plan will update shortly.'
+          : params.billing === 'cancelled'
+            ? 'Checkout was cancelled.'
+            : null
+      }
     />
   );
 }

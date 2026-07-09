@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server';
 import { ACCESS_TOKEN_COOKIE } from '@/lib/auth/constants';
 import { verifyAccessToken } from '@/lib/auth/jwt';
 
-const PUBLIC_ROUTES = ['/login', '/signup', '/forgot-password'];
+const PUBLIC_ROUTES = ['/login', '/signup', '/forgot-password', '/reset-password'];
 const AUTH_FLOW_ROUTES = ['/verify-email', '/onboarding'];
 const PROTECTED_ROUTES = ['/dashboard'];
 

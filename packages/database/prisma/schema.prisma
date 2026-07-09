@@ -47,6 +47,11 @@ model User {
   emailVerifiedAt DateTime?
   sessionVersion  Int      @default(0)
 
+  emailVerificationOtpHash      String?
+  emailVerificationOtpExpiresAt DateTime?
+  passwordResetTokenHash        String?
+  passwordResetTokenExpiresAt   DateTime?
+
   activeOrganizationId String?
   activeOrganization   Organization? @relation("ActiveOrg", fields: [activeOrganizationId], references: [id], onDelete: SetNull)
 

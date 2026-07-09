@@ -3,7 +3,6 @@ import {
   Controller,
   Get,
   HttpCode,
-  NotImplementedException,
   Post,
   Req,
   Res,
@@ -85,21 +84,15 @@ export class AuthController {
     return this.authService.getMe(user);
   }
 
-  // TODO: Generate reset token, persist it, and send reset email.
   @Post('forgot-password')
   @HttpCode(200)
   forgotPassword(@Body() dto: ForgotPasswordDto) {
-    void dto;
-    return {
-      message:
-        'If an account exists for this email, a reset link will be sent.',
-    };
+    return this.authService.forgotPassword(dto.email);
   }
 
-  // TODO: Validate reset token from email and update user password hash.
   @Post('reset-password')
+  @HttpCode(200)
   resetPassword(@Body() dto: ResetPasswordDto) {
-    void dto;
-    throw new NotImplementedException('Password reset is not implemented yet');
+    return this.authService.resetPassword(dto.token, dto.password);
   }
 }

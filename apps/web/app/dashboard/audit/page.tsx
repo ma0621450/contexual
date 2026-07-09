@@ -13,6 +13,8 @@ const ACTION_LABELS: Record<string, string> = {
   'member.reinstated': 'Reinstated member',
   'member.spend_limit_set': 'Updated spend limit',
   'plan.changed': 'Changed plan',
+  'billing.subscription_synced': 'Subscription updated',
+  'billing.subscription_canceled': 'Subscription canceled',
   'conversation.created': 'Started conversation',
 };
 

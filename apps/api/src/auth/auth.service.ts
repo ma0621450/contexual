@@ -1,8 +1,20 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthCookieService } from './auth-cookie.service';
-import { hashPassword, isOtpValid, verifyPassword } from './auth.utils';
+import {
+  generateOtp,
+  generatePasswordResetToken,
+  hashOtp,
+  hashPassword,
+  isDevOtpAllowed,
+  verifyPassword,
+} from './auth.utils';
 import type { AuthUser } from './auth.types';
+import { MailService } from '../mail/mail.service';
 import { SessionsService } from '../sessions/sessions.service';
 import { UsersService } from '../users/users.service';
 
@@ -12,7 +24,12 @@ export class AuthService {
     private readonly authCookieService: AuthCookieService,
     private readonly usersService: UsersService,
     private readonly sessionsService: SessionsService,
+    private readonly mailService: MailService,
   ) {}
+
+  private webUrl(): string {
+    return process.env.WEB_URL ?? 'http://localhost:3000';
+  }
 
   async validateUser(
     email: string,
@@ -35,6 +52,11 @@ export class AuthService {
   async register(name: string, email: string, password: string, res: Response) {
     const passwordHash = await hashPassword(password);
     const user = await this.usersService.createUser(name, email, passwordHash);
+
+    const otp = generateOtp();
+    await this.usersService.setEmailVerificationOtp(user.id, otp);
+    await this.mailService.sendVerificationOtp(user.email, user.name, otp);
+
     await this.sessionsService.createSession(user, res);
 
     return {
@@ -57,14 +79,60 @@ export class AuthService {
       return { redirectTo: '/onboarding' };
     }
 
-    if (!isOtpValid(otp)) {
-      throw new UnauthorizedException('Invalid verification code');
+    const mailConfigured = this.mailService.isConfigured();
+    if (isDevOtpAllowed(otp, mailConfigured)) {
+      const updatedUser = await this.usersService.markEmailVerified(user.id);
+      await this.sessionsService.createSession(updatedUser, res);
+      return { redirectTo: '/onboarding' };
+    }
+
+    const record = await this.usersService.findForOtpVerification(user.id);
+    if (
+      !record?.emailVerificationOtpHash ||
+      !record.emailVerificationOtpExpiresAt ||
+      record.emailVerificationOtpExpiresAt < new Date() ||
+      record.emailVerificationOtpHash !== hashOtp(otp)
+    ) {
+      throw new UnauthorizedException('Invalid or expired verification code');
     }
 
     const updatedUser = await this.usersService.markEmailVerified(user.id);
     await this.sessionsService.createSession(updatedUser, res);
 
     return { redirectTo: '/onboarding' };
+  }
+
+  async forgotPassword(email: string) {
+    const user = await this.usersService.findByEmailForPasswordReset(email);
+
+    if (user) {
+      const token = generatePasswordResetToken();
+      await this.usersService.setPasswordResetToken(user.id, token);
+      await this.mailService.sendPasswordReset({
+        to: user.email,
+        name: user.name,
+        resetUrl: `${this.webUrl()}/reset-password?token=${encodeURIComponent(token)}`,
+      });
+    }
+
+    return {
+      message:
+        'If an account exists for this email, a reset link will be sent.',
+    };
+  }
+
+  async resetPassword(token: string, password: string) {
+    const user = await this.usersService.findByPasswordResetToken(token);
+
+    if (!user) {
+      throw new BadRequestException('This reset link is invalid or has expired');
+    }
+
+    const passwordHash = await hashPassword(password);
+    await this.usersService.updatePassword(user.id, passwordHash);
+    await this.sessionsService.revokeAllUserRefreshTokens(user.id);
+
+    return { ok: true };
   }
 
   async refresh(refreshToken: string | undefined, res: Response) {

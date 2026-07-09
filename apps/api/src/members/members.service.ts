@@ -6,8 +6,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InviteStatus, MembershipRole, PlanTier } from '@contexual/database';
 import { AuditService } from '../audit/audit.service';
+import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../database/prisma.service';
 import { getPlanLimits } from '../organizations/plan-limits';
 
@@ -18,7 +20,13 @@ export class MembersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly config: ConfigService,
+    private readonly mailService: MailService,
   ) {}
+
+  private webUrl(): string {
+    return this.config.get<string>('WEB_URL') ?? 'http://localhost:3000';
+  }
 
   async getOverview(organizationId: string) {
     const organization = await this.prisma.organization.findUnique({
@@ -148,6 +156,18 @@ export class MembersService {
       actorId: invitedById,
       action: 'invite.created',
       details: { email: normalizedEmail, role },
+    });
+
+    const inviter = await this.prisma.user.findUnique({
+      where: { id: invitedById },
+      select: { name: true },
+    });
+
+    await this.mailService.sendTeamInvite({
+      to: normalizedEmail,
+      organizationName: organization.name,
+      inviterName: inviter?.name ?? 'A team admin',
+      inviteUrl: `${this.webUrl()}/onboarding?invite=${invite.token}`,
     });
 
     return {
@@ -315,6 +335,12 @@ export class MembersService {
     actingUserId: string,
     planTier: PlanTier,
   ) {
+    if (this.config.get<string>('STRIPE_SECRET_KEY')) {
+      throw new BadRequestException(
+        'Plan changes are managed through billing. Use Upgrade or Manage billing on the Usage page.',
+      );
+    }
+
     const maxMembers = getPlanLimits(planTier).maxMembers;
 
     const currentMembers = await this.prisma.membership.count({

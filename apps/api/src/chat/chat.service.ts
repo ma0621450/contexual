@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ForbiddenException,
   Injectable,
@@ -13,6 +14,7 @@ import {
   OpenAiClient,
 } from './openai.client';
 import { estimateCostCents } from './pricing';
+import type { ChatStreamEvent } from './chat.types';
 
 const DEFAULT_MODEL = 'gpt-4o-mini';
 const TITLE_MAX_LENGTH = 60;
@@ -241,6 +243,170 @@ export class ChatService {
       usage: {
         promptTokens: completion.promptTokens,
         completionTokens: completion.completionTokens,
+        estimatedCostCents: costCents,
+        model,
+      },
+    };
+  }
+
+  async *streamMessage(
+    organizationId: string,
+    userId: string,
+    input: { conversationId?: string; content: string; model?: string },
+  ): AsyncGenerator<ChatStreamEvent> {
+    const membership = await this.prisma.membership.findUnique({
+      where: { userId_organizationId: { userId, organizationId } },
+      select: {
+        id: true,
+        suspended: true,
+        spendLimitCents: true,
+        spendUsedCents: true,
+      },
+    });
+
+    if (!membership) {
+      throw new ForbiddenException('You are not a member of this organization');
+    }
+
+    if (membership.suspended) {
+      throw new ForbiddenException(
+        'Your access has been suspended by an administrator',
+      );
+    }
+
+    if (
+      membership.spendLimitCents !== null &&
+      membership.spendLimitCents > 0 &&
+      membership.spendUsedCents >= membership.spendLimitCents
+    ) {
+      throw new ForbiddenException(
+        'You have reached your spending limit. Contact an administrator.',
+      );
+    }
+
+    const providerKey =
+      await this.providersService.getDecryptedKey(organizationId);
+
+    if (!providerKey) {
+      throw new BadRequestException(
+        'No AI provider is connected. Ask an admin to connect one.',
+      );
+    }
+
+    if (providerKey.provider !== AiProvider.OPENAI) {
+      throw new BadRequestException(
+        'Only OpenAI is supported for chat at the moment.',
+      );
+    }
+
+    const model =
+      input.model ?? providerKey.defaultModel ?? DEFAULT_MODEL;
+
+    const conversation = await this.resolveConversation(
+      organizationId,
+      userId,
+      input.conversationId,
+      input.content,
+      providerKey.provider,
+      model,
+    );
+
+    const history = await this.prisma.message.findMany({
+      where: { conversationId: conversation.id },
+      orderBy: { createdAt: 'asc' },
+      select: { role: true, content: true },
+    });
+
+    const promptMessages: ChatCompletionMessage[] = [
+      ...history.map((message) => ({
+        role: this.toOpenAiRole(message.role),
+        content: message.content,
+      })),
+      { role: 'user' as const, content: input.content },
+    ];
+
+    await this.prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        role: MessageRole.USER,
+        content: input.content,
+      },
+    });
+
+    let fullContent = '';
+    let promptTokens = 0;
+    let completionTokens = 0;
+
+    for await (const part of this.openAiClient.streamChatCompletion(
+      providerKey.apiKey,
+      model,
+      promptMessages,
+    )) {
+      if (part.kind === 'delta') {
+        fullContent += part.content;
+        yield { type: 'token', content: part.content };
+      } else {
+        promptTokens = part.promptTokens;
+        completionTokens = part.completionTokens;
+      }
+    }
+
+    if (!fullContent) {
+      throw new BadGatewayException('OpenAI returned an empty response');
+    }
+
+    const costCents = estimateCostCents(
+      model,
+      promptTokens,
+      completionTokens,
+    );
+
+    const assistantMessage = await this.prisma.$transaction(async (tx) => {
+      const assistant = await tx.message.create({
+        data: {
+          conversationId: conversation.id,
+          role: MessageRole.ASSISTANT,
+          content: fullContent,
+          promptTokens,
+          completionTokens,
+        },
+        select: { id: true, role: true, content: true, createdAt: true },
+      });
+
+      await tx.usageLog.create({
+        data: {
+          organizationId,
+          userId,
+          conversationId: conversation.id,
+          provider: providerKey.provider,
+          model,
+          promptTokens,
+          completionTokens,
+          estimatedCostCents: costCents,
+        },
+      });
+
+      await tx.membership.update({
+        where: { id: membership.id },
+        data: { spendUsedCents: { increment: costCents } },
+      });
+
+      await tx.conversation.update({
+        where: { id: conversation.id },
+        data: { updatedAt: new Date() },
+      });
+
+      return assistant;
+    });
+
+    yield {
+      type: 'done',
+      conversationId: conversation.id,
+      title: conversation.title,
+      message: assistantMessage,
+      usage: {
+        promptTokens,
+        completionTokens,
         estimatedCostCents: costCents,
         model,
       },

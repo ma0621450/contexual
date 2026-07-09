@@ -109,6 +109,14 @@ export type AuditLogEntry = {
   createdAt: string;
 };
 
+export type BillingStatus = {
+  stripeConfigured: boolean;
+  planTier: 'FREE' | 'STARTER' | 'PRO' | 'BUSINESS';
+  subscriptionStatus: string | null;
+  hasBillingAccount: boolean;
+  hasActiveSubscription: boolean;
+};
+
 async function getCookieHeader(): Promise<string | null> {
   const cookieStore = await cookies();
   const cookieHeader = cookieStore
@@ -176,6 +184,10 @@ export async function getConversation(
 
 export async function getUsage(): Promise<UsageSummary | null> {
   return serverFetch<UsageSummary>('/organizations/usage');
+}
+
+export async function getBillingStatus(): Promise<BillingStatus | null> {
+  return serverFetch<BillingStatus>('/billing/status');
 }
 
 export async function getAuditLogs(): Promise<AuditLogEntry[]> {

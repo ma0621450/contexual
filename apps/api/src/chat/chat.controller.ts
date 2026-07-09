@@ -4,10 +4,13 @@ import {
   Delete,
   Get,
   HttpCode,
+  HttpException,
   Param,
   Post,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthUser } from '../auth/auth.types';
@@ -55,6 +58,42 @@ export class ChatController {
     });
   }
 
+  @Post('messages/stream')
+  async streamMessage(
+    @ActiveOrg() organizationId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: SendMessageDto,
+    @Res() res: Response,
+  ) {
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const writeEvent = (payload: unknown) => {
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    try {
+      for await (const event of this.chatService.streamMessage(
+        organizationId,
+        user.id,
+        {
+          conversationId: dto.conversationId,
+          content: dto.content,
+          model: dto.model,
+        },
+      )) {
+        writeEvent(event);
+      }
+    } catch (error) {
+      const message = this.getStreamErrorMessage(error);
+      writeEvent({ type: 'error', message });
+    }
+
+    res.end();
+  }
+
   @Delete('conversations/:id')
   @HttpCode(200)
   archiveConversation(
@@ -67,5 +106,29 @@ export class ChatController {
       user.id,
       conversationId,
     );
+  }
+
+  private getStreamErrorMessage(error: unknown): string {
+    if (error instanceof HttpException) {
+      const response = error.getResponse();
+      if (typeof response === 'string') {
+        return response;
+      }
+      if (
+        typeof response === 'object' &&
+        response !== null &&
+        'message' in response
+      ) {
+        const msg = (response as { message?: string | string[] }).message;
+        if (Array.isArray(msg)) {
+          return msg[0] ?? 'Request failed';
+        }
+        if (typeof msg === 'string') {
+          return msg;
+        }
+      }
+    }
+
+    return 'Unable to complete the chat request';
   }
 }

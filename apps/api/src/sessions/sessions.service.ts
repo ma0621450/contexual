@@ -88,7 +88,7 @@ export class SessionsService {
     return { ok: true };
   }
 
-  private async revokeAllUserRefreshTokens(userId: string) {
+  async revokeAllUserRefreshTokens(userId: string) {
     await this.prisma.refreshToken.updateMany({
       where: { userId, revokedAt: null },
       data: { revokedAt: new Date() },

@@ -72,7 +72,7 @@ export function TeamClient({
 
       setEmail('');
       setRole('MEMBER');
-      setNotice('Invitation created. Share the invite link below.');
+      setNotice('Invitation sent. The invitee will receive an email with a join link.');
       refresh();
     } catch {
       setFormError('Unable to create invite. Check your connection.');

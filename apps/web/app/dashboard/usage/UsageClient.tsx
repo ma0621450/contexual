@@ -1,18 +1,25 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api/client';
-import type { TeamOverview, UsageSummary } from '@/lib/api/server';
+import type {
+  BillingStatus,
+  TeamOverview,
+  UsageSummary,
+} from '@/lib/api/server';
 
 type UsageClientProps = {
   usage: UsageSummary | null;
   overview: TeamOverview | null;
+  billing: BillingStatus | null;
   currentUserId: string;
+  billingNotice: string | null;
 };
 
 const PLANS = ['FREE', 'STARTER', 'PRO', 'BUSINESS'] as const;
+const PAID_PLANS = ['STARTER', 'PRO', 'BUSINESS'] as const;
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -21,14 +28,27 @@ function formatCents(cents: number): string {
 export function UsageClient({
   usage,
   overview,
+  billing,
   currentUserId,
+  billingNotice,
 }: UsageClientProps) {
   const router = useRouter();
   const [plan, setPlan] = useState(overview?.planTier ?? 'FREE');
+  const [upgradePlan, setUpgradePlan] = useState<
+    (typeof PAID_PLANS)[number]
+  >('STARTER');
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [limitDrafts, setLimitDrafts] = useState<Record<string, string>>({});
+
+  const stripeEnabled = billing?.stripeConfigured ?? false;
+
+  useEffect(() => {
+    if (billingNotice) {
+      setNotice(billingNotice);
+    }
+  }, [billingNotice]);
 
   async function handlePlanChange() {
     if (pending) return;
@@ -48,6 +68,49 @@ export function UsageClient({
       router.refresh();
     } catch {
       setError('Unable to change plan.');
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleCheckout() {
+    if (pending) return;
+    setError('');
+    setNotice('');
+    setPending('checkout');
+    try {
+      const result = await apiFetch<{ url: string }>('/billing/checkout', {
+        method: 'POST',
+        body: JSON.stringify({ planTier: upgradePlan }),
+      });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      window.location.href = result.data.url;
+    } catch {
+      setError('Unable to start checkout.');
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handlePortal() {
+    if (pending) return;
+    setError('');
+    setNotice('');
+    setPending('portal');
+    try {
+      const result = await apiFetch<{ url: string }>('/billing/portal', {
+        method: 'POST',
+      });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      window.location.href = result.data.url;
+    } catch {
+      setError('Unable to open billing portal.');
     } finally {
       setPending(null);
     }
@@ -164,32 +227,80 @@ export function UsageClient({
         <h2 className="text-base font-semibold text-text-primary">Plan</h2>
         <p className="mt-1 text-sm text-text-muted">
           Current plan: {overview?.planTier ?? 'FREE'} · up to{' '}
-          {overview?.maxMembers ?? 0} members. Changing the plan updates member
-          limits immediately (no payment collected in this version).
+          {overview?.maxMembers ?? 0} members
+          {billing?.subscriptionStatus
+            ? ` · subscription ${billing.subscriptionStatus}`
+            : ''}
+          .
         </p>
-        <div className="mt-4 flex items-center gap-3">
-          <select
-            value={plan}
-            onChange={(event) =>
-              setPlan(event.target.value as typeof plan)
-            }
-            className="auth-input w-40"
-          >
-            {PLANS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={handlePlanChange}
-            className="btn-primary w-auto shrink-0"
-            disabled={pending === 'plan'}
-          >
-            {pending === 'plan' ? 'Updating...' : 'Update plan'}
-          </button>
-        </div>
+
+        {stripeEnabled ? (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <select
+              value={upgradePlan}
+              onChange={(event) =>
+                setUpgradePlan(
+                  event.target.value as (typeof PAID_PLANS)[number],
+                )
+              }
+              className="auth-input w-40"
+            >
+              {PAID_PLANS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleCheckout}
+              className="btn-primary w-auto shrink-0"
+              disabled={pending === 'checkout'}
+            >
+              {pending === 'checkout' ? 'Redirecting...' : 'Upgrade via Stripe'}
+            </button>
+            {billing?.hasBillingAccount ? (
+              <button
+                type="button"
+                onClick={handlePortal}
+                className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-surface-page disabled:opacity-60"
+                disabled={pending === 'portal'}
+              >
+                {pending === 'portal' ? 'Opening...' : 'Manage billing'}
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <>
+            <p className="mt-2 text-xs text-text-muted">
+              Stripe is not configured — plan changes apply immediately without
+              payment (dev mode).
+            </p>
+            <div className="mt-4 flex items-center gap-3">
+              <select
+                value={plan}
+                onChange={(event) =>
+                  setPlan(event.target.value as typeof plan)
+                }
+                className="auth-input w-40"
+              >
+                {PLANS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={handlePlanChange}
+                className="btn-primary w-auto shrink-0"
+                disabled={pending === 'plan'}
+              >
+                {pending === 'plan' ? 'Updating...' : 'Update plan'}
+              </button>
+            </div>
+          </>
+        )}
       </section>
 
       <section className="mt-8 rounded-xl border border-border bg-surface-card p-6">
