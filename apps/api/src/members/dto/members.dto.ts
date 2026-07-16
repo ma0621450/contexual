@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsInt,
   IsOptional,
+  Max,
   Min,
 } from 'class-validator';
 import { MembershipRole, PlanTier } from '@contexual/database';
@@ -40,4 +41,23 @@ export class SetSpendLimitDto {
   @IsInt({ message: 'Limit must be a whole number of cents' })
   @Min(0, { message: 'Limit cannot be negative' })
   limitCents!: number;
+}
+
+export class SetTokenLimitDto {
+  @IsInt({ message: 'Token limit must be a whole number' })
+  @Min(0, { message: 'Token limit cannot be negative' })
+  @Max(1_000_000_000)
+  tokenLimit!: number;
+}
+
+export class SetOrganizationLimitsDto {
+  @IsInt()
+  @Min(0)
+  @Max(100_000_000)
+  monthlySpendLimitCents!: number;
+
+  @IsInt()
+  @Min(0)
+  @Max(2_000_000_000)
+  monthlyTokenLimit!: number;
 }

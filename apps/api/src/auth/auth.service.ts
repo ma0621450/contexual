@@ -102,6 +102,29 @@ export class AuthService {
     return { redirectTo: '/onboarding' };
   }
 
+  async resendVerification(user: AuthUser) {
+    if (user.emailVerifiedAt) {
+      return { ok: true };
+    }
+
+    const verification = await this.usersService.findForOtpVerification(
+      user.id,
+    );
+    if (
+      verification?.emailVerificationOtpSentAt &&
+      Date.now() - verification.emailVerificationOtpSentAt.getTime() < 60_000
+    ) {
+      throw new BadRequestException(
+        'Please wait one minute before requesting another code',
+      );
+    }
+
+    const otp = generateOtp();
+    await this.usersService.setEmailVerificationOtp(user.id, otp);
+    await this.mailService.sendVerificationOtp(user.email, user.name, otp);
+    return { ok: true };
+  }
+
   async forgotPassword(email: string) {
     const user = await this.usersService.findByEmailForPasswordReset(email);
 
@@ -125,7 +148,9 @@ export class AuthService {
     const user = await this.usersService.findByPasswordResetToken(token);
 
     if (!user) {
-      throw new BadRequestException('This reset link is invalid or has expired');
+      throw new BadRequestException(
+        'This reset link is invalid or has expired',
+      );
     }
 
     const passwordHash = await hashPassword(password);

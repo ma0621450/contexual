@@ -5,12 +5,15 @@ import { useRouter } from 'next/navigation';
 import { verifyEmailSchema } from '@/lib/validations/auth';
 import { DEV_OTP_HINT } from '@/lib/auth/dev-hint';
 import { apiFetch } from '@/lib/api/client';
-import { AuthLayout } from '@/components/auth/AuthLayout';
+import { AuthError, AuthLayout } from '@/components/auth/AuthLayout';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 export default function VerifyEmailPage() {
   const router = useRouter();
   const [digits, setDigits] = useState(['', '', '', '']);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
   const inputsRef = useRef<Array<HTMLInputElement | null>>([]);
 
@@ -72,17 +75,38 @@ export default function VerifyEmailPage() {
     router.refresh();
   }
 
+  async function resendCode() {
+    if (loading) return;
+    setLoading(true);
+    setError('');
+    setNotice('');
+    const result = await apiFetch<{ ok: true }>('/auth/resend-verification', {
+      method: 'POST',
+    });
+    setLoading(false);
+    if (result.ok) {
+      setNotice('A new verification code was sent.');
+    } else {
+      setError(result.error);
+    }
+  }
+
   return (
     <AuthLayout
       title="Verify your email"
       subtitle="We sent a verification code to your email address"
     >
       <form onSubmit={handleSubmit} className="space-y-6">
-        <p className="text-sm text-text-muted">{DEV_OTP_HINT}</p>
+        {DEV_OTP_HINT ? (
+          <p className="text-center text-sm text-muted-foreground">
+            {DEV_OTP_HINT}
+          </p>
+        ) : null}
 
-        {error ? (
-          <p className="rounded-lg border border-semantic-error/20 bg-semantic-error/5 px-3 py-2 text-sm text-semantic-error">
-            {error}
+        <AuthError>{error}</AuthError>
+        {notice ? (
+          <p className="rounded-lg border border-border bg-accent px-3 py-2 text-sm text-accent-foreground">
+            {notice}
           </p>
         ) : null}
 
@@ -100,19 +124,29 @@ export default function VerifyEmailPage() {
               onChange={(event) => updateDigit(index, event.target.value)}
               onKeyDown={(event) => handleKeyDown(index, event)}
               onPaste={handlePaste}
-              className={`h-12 w-12 rounded-lg border bg-surface-card text-center text-lg font-semibold outline-none transition-colors ${
+              className={cn(
+                'size-12 rounded-lg border bg-transparent text-center text-lg font-semibold outline-none transition-colors focus:ring-2',
                 error
-                  ? 'border-semantic-error focus:border-semantic-error focus:ring-2 focus:ring-semantic-error/20'
-                  : 'border-border focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20'
-              }`}
+                  ? 'border-destructive focus:border-destructive focus:ring-destructive/20'
+                  : 'border-input focus:border-ring focus:ring-ring/25',
+              )}
               aria-label={`Digit ${index + 1}`}
             />
           ))}
         </div>
 
-        <button type="submit" className="btn-primary" disabled={loading}>
-          {loading ? 'Verifying...' : 'Verify email'}
-        </button>
+        <Button type="submit" className="w-full" disabled={loading}>
+          {loading ? 'Verifying…' : 'Verify email'}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full"
+          onClick={resendCode}
+          disabled={loading}
+        >
+          Resend code
+        </Button>
       </form>
     </AuthLayout>
   );

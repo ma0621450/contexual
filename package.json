@@ -14,7 +14,8 @@
     "test": "turbo run test",
     "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md}\"",
     "db:generate": "npm run db:generate -w @contexual/database",
-    "db:migrate": "npm run db:migrate -w @contexual/database"
+    "db:migrate": "npm run db:migrate -w @contexual/database",
+    "db:deploy": "npm run db:deploy -w @contexual/database"
   },
   "devDependencies": {
     "prettier": "^3.4.2",

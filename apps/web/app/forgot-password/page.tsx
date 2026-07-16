@@ -5,6 +5,7 @@ import { forgotPasswordSchema } from '@/lib/validations/auth';
 import { apiFetch } from '@/lib/api/client';
 import { AuthLayout, AuthLink } from '@/components/auth/AuthLayout';
 import { FormField } from '@/components/auth/FormField';
+import { Button } from '@/components/ui/button';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -53,7 +54,7 @@ export default function ForgotPasswordPage() {
     >
       <form onSubmit={handleSubmit} className="space-y-5">
         {message ? (
-          <p className="rounded-lg border border-brand-primary/20 bg-brand-tint px-3 py-2 text-sm text-text-primary">
+          <p className="rounded-lg border border-border bg-accent px-3 py-2 text-sm text-accent-foreground">
             {message}
           </p>
         ) : null}
@@ -68,9 +69,9 @@ export default function ForgotPasswordPage() {
           error={fieldErrors.email}
         />
 
-        <button type="submit" className="btn-primary" disabled={loading}>
-          {loading ? 'Sending...' : 'Send reset link'}
-        </button>
+        <Button type="submit" className="w-full" disabled={loading}>
+          {loading ? 'Sending…' : 'Send reset link'}
+        </Button>
       </form>
     </AuthLayout>
   );

@@ -1,6 +1,7 @@
 import type { MessageRole } from '@contexual/database';
 
 export type ChatStreamEvent =
+  | { type: 'start'; conversationId: string; title: string }
   | { type: 'token'; content: string }
   | {
       type: 'done';

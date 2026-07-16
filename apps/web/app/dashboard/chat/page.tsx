@@ -30,6 +30,7 @@ export default async function ChatPage() {
     <ChatClient
       initialConversations={conversations}
       providerConnected={providerStatus?.connected ?? false}
+      provider={providerStatus?.provider ?? null}
       isAdmin={user.role === 'ADMIN'}
     />
   );

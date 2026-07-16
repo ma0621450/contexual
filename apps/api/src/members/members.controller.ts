@@ -19,7 +19,9 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import {
   ChangePlanDto,
   CreateInviteDto,
+  SetOrganizationLimitsDto,
   SetSpendLimitDto,
+  SetTokenLimitDto,
   SuspendMemberDto,
   UpdateMemberRoleDto,
 } from './dto/members.dto';
@@ -92,9 +94,10 @@ export class MembersController {
   @HttpCode(200)
   revokeInvite(
     @ActiveOrg() organizationId: string,
+    @CurrentUser() user: AuthUser,
     @Param('id') inviteId: string,
   ) {
-    return this.membersService.revokeInvite(organizationId, inviteId);
+    return this.membersService.revokeInvite(organizationId, user.id, inviteId);
   }
 
   @Patch('members/:userId/role')
@@ -142,6 +145,36 @@ export class MembersController {
       user.id,
       targetUserId,
       dto.limitCents,
+    );
+  }
+
+  @Patch('members/:userId/token-limit')
+  @Roles(MembershipRole.ADMIN)
+  setTokenLimit(
+    @ActiveOrg() organizationId: string,
+    @CurrentUser() user: AuthUser,
+    @Param('userId') targetUserId: string,
+    @Body() dto: SetTokenLimitDto,
+  ) {
+    return this.membersService.setTokenLimit(
+      organizationId,
+      user.id,
+      targetUserId,
+      dto.tokenLimit,
+    );
+  }
+
+  @Patch('usage-limits')
+  @Roles(MembershipRole.ADMIN)
+  setOrganizationLimits(
+    @ActiveOrg() organizationId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: SetOrganizationLimitsDto,
+  ) {
+    return this.membersService.setOrganizationLimits(
+      organizationId,
+      user.id,
+      dto,
     );
   }
 

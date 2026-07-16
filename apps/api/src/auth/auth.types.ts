@@ -15,6 +15,7 @@ export type AuthMembership = {
   id: string;
   organizationId: string;
   role: MembershipRole;
+  suspended: boolean;
 };
 
 export type AuthUser = {
@@ -38,7 +39,9 @@ export function getActiveMembership(user: AuthUser): AuthMembership | null {
 
   return (
     user.memberships.find(
-      (membership) => membership.organizationId === user.activeOrganizationId,
+      (membership) =>
+        membership.organizationId === user.activeOrganizationId &&
+        !membership.suspended,
     ) ?? null
   );
 }

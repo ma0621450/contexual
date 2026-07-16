@@ -12,7 +12,12 @@ export type CurrentUser = {
   emailVerifiedAt: string | null;
   activeOrganizationId: string | null;
   role: OrganizationRole | null;
-  memberships: { id: string; organizationId: string; role: OrganizationRole }[];
+  memberships: {
+    id: string;
+    organizationId: string;
+    role: OrganizationRole;
+    suspended: boolean;
+  }[];
 };
 
 export type TeamMember = {
@@ -45,6 +50,15 @@ export type TeamOverview = {
   seatsRemaining: number;
 };
 
+export type OrganizationMembership = {
+  id: string;
+  name: string;
+  slug: string;
+  planTier: 'FREE' | 'STARTER' | 'PRO' | 'BUSINESS';
+  role: OrganizationRole;
+  suspended: boolean;
+};
+
 export type AiProviderId = 'OPENAI' | 'ANTHROPIC' | 'GOOGLE' | 'XAI';
 
 export type ProviderStatus = {
@@ -68,6 +82,12 @@ export type ChatMessage = {
   role: 'USER' | 'ASSISTANT' | 'SYSTEM';
   content: string;
   createdAt: string;
+  attachments?: {
+    id: string;
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+  }[];
 };
 
 export type ConversationDetail = {
@@ -78,6 +98,18 @@ export type ConversationDetail = {
   messages: ChatMessage[];
 };
 
+export type MemoryItem = {
+  id: string;
+  organizationId: string;
+  userId: string | null;
+  scope: 'USER' | 'ORGANIZATION';
+  title: string;
+  content: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type UsageMember = {
   userId: string;
   name: string;
@@ -86,12 +118,21 @@ export type UsageMember = {
   suspended: boolean;
   spendLimitCents: number | null;
   spendUsedCents: number;
+  tokenLimit: number | null;
+  tokensUsed: number;
   promptTokens: number;
   completionTokens: number;
   estimatedCostCents: number;
 };
 
 export type UsageSummary = {
+  spendPeriodStartedAt: string;
+  organizationLimits: {
+    monthlySpendLimitCents: number | null;
+    monthlySpendUsedCents: number;
+    monthlyTokenLimit: number | null;
+    monthlyTokensUsed: number;
+  } | null;
   totals: {
     promptTokens: number;
     completionTokens: number;
@@ -166,6 +207,13 @@ export async function getTeamOverview(): Promise<TeamOverview | null> {
   return serverFetch<TeamOverview>('/organizations/overview');
 }
 
+export async function getOrganizations(): Promise<OrganizationMembership[]> {
+  return (
+    (await serverFetch<OrganizationMembership[]>('/onboarding/organizations')) ??
+    []
+  );
+}
+
 export async function getProviderStatus(): Promise<ProviderStatus | null> {
   return serverFetch<ProviderStatus>('/organizations/providers');
 }
@@ -180,6 +228,10 @@ export async function getConversation(
   id: string,
 ): Promise<ConversationDetail | null> {
   return serverFetch<ConversationDetail>(`/chat/conversations/${id}`);
+}
+
+export async function getMemories(): Promise<MemoryItem[]> {
+  return (await serverFetch<MemoryItem[]>('/memories')) ?? [];
 }
 
 export async function getUsage(): Promise<UsageSummary | null> {

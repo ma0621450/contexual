@@ -13,7 +13,7 @@ import {
 } from '../auth/auth.utils';
 
 const MEMBERSHIP_SELECT = {
-  select: { id: true, organizationId: true, role: true },
+  select: { id: true, organizationId: true, role: true, suspended: true },
 } as const;
 
 @Injectable()
@@ -71,6 +71,7 @@ export class UsersService {
         emailVerifiedAt: new Date(),
         emailVerificationOtpHash: null,
         emailVerificationOtpExpiresAt: null,
+        emailVerificationOtpSentAt: null,
       },
     });
 
@@ -89,6 +90,7 @@ export class UsersService {
       data: {
         emailVerificationOtpHash: hashOtp(otp),
         emailVerificationOtpExpiresAt: expiresAt,
+        emailVerificationOtpSentAt: new Date(),
       },
     });
   }
@@ -100,6 +102,7 @@ export class UsersService {
         id: true,
         emailVerificationOtpHash: true,
         emailVerificationOtpExpiresAt: true,
+        emailVerificationOtpSentAt: true,
       },
     });
   }

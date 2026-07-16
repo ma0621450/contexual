@@ -4,8 +4,9 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { registerSchema } from '@/lib/validations/auth';
 import { apiFetch } from '@/lib/api/client';
-import { AuthLayout, AuthLink } from '@/components/auth/AuthLayout';
+import { AuthError, AuthLayout, AuthLink } from '@/components/auth/AuthLayout';
 import { FormField } from '@/components/auth/FormField';
+import { Button } from '@/components/ui/button';
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -61,11 +62,7 @@ export default function SignUpPage() {
       }
     >
       <form onSubmit={handleSubmit} className="space-y-5">
-        {formError ? (
-          <p className="rounded-lg border border-semantic-error/20 bg-semantic-error/5 px-3 py-2 text-sm text-semantic-error">
-            {formError}
-          </p>
-        ) : null}
+        <AuthError>{formError}</AuthError>
 
         <FormField
           label="Name"
@@ -96,9 +93,9 @@ export default function SignUpPage() {
           error={fieldErrors.password}
         />
 
-        <button type="submit" className="btn-primary" disabled={loading}>
-          {loading ? 'Creating account...' : 'Create account'}
-        </button>
+        <Button type="submit" className="w-full" disabled={loading}>
+          {loading ? 'Creating account…' : 'Create account'}
+        </Button>
       </form>
     </AuthLayout>
   );

@@ -6,12 +6,13 @@ import {
 } from '@nestjs/common';
 import { AiProvider } from '@contexual/database';
 import { AuditService } from '../audit/audit.service';
+import {
+  getDefaultModel,
+  getModelsForProvider,
+  isModelForProvider,
+} from '../chat/model-catalog';
 import { EncryptionService } from '../common/crypto/encryption.service';
 import { PrismaService } from '../database/prisma.service';
-
-const DEFAULT_MODELS: Partial<Record<AiProvider, string>> = {
-  [AiProvider.OPENAI]: 'gpt-4o-mini',
-};
 
 export type DecryptedProviderKey = {
   provider: AiProvider;
@@ -58,18 +59,17 @@ export class ProvidersService {
     apiKey: string,
     defaultModel?: string,
   ) {
-    if (provider !== AiProvider.OPENAI) {
-      throw new BadRequestException(
-        'Only OpenAI is supported at the moment. More providers are coming soon.',
-      );
-    }
-
-    await this.validateOpenAiKey(apiKey);
+    await this.validateProviderKey(provider, apiKey);
 
     const model =
       defaultModel && defaultModel.length > 0
         ? defaultModel
-        : (DEFAULT_MODELS[provider] ?? null);
+        : getDefaultModel(provider);
+    if (!isModelForProvider(model, provider)) {
+      throw new BadRequestException(
+        'The default model does not belong to the selected provider.',
+      );
+    }
 
     const encrypted = this.encryption.encrypt(apiKey);
 
@@ -150,29 +150,68 @@ export class ProvidersService {
     };
   }
 
-  private async validateOpenAiKey(apiKey: string): Promise<void> {
+  getAvailableModels(provider: AiProvider) {
+    return getModelsForProvider(provider).map(({ id, label }) => ({
+      id,
+      label,
+    }));
+  }
+
+  private async validateProviderKey(
+    provider: AiProvider,
+    apiKey: string,
+  ): Promise<void> {
     let response: Response;
 
     try {
-      response = await fetch('https://api.openai.com/v1/models', {
-        headers: { Authorization: `Bearer ${apiKey}` },
+      response = await fetch(this.validationUrl(provider, apiKey), {
+        headers: this.validationHeaders(provider, apiKey),
       });
     } catch {
       throw new ServiceUnavailableException(
-        'Could not reach OpenAI to validate the API key. Try again shortly.',
+        'Could not reach the provider to validate the API key. Try again shortly.',
       );
     }
 
     if (response.status === 401) {
       throw new BadRequestException(
-        'The OpenAI API key was rejected. Please check the key and try again.',
+        'The provider API key was rejected. Please check the key and try again.',
       );
     }
 
     if (!response.ok) {
       throw new BadRequestException(
-        `OpenAI rejected the key validation request (status ${response.status}).`,
+        `The provider rejected key validation (status ${response.status}).`,
       );
     }
+  }
+
+  private validationUrl(provider: AiProvider, apiKey: string): string {
+    switch (provider) {
+      case AiProvider.ANTHROPIC:
+        return 'https://api.anthropic.com/v1/models';
+      case AiProvider.GOOGLE:
+        return `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`;
+      case AiProvider.XAI:
+        return 'https://api.x.ai/v1/models';
+      default:
+        return 'https://api.openai.com/v1/models';
+    }
+  }
+
+  private validationHeaders(
+    provider: AiProvider,
+    apiKey: string,
+  ): Record<string, string> {
+    if (provider === AiProvider.ANTHROPIC) {
+      return {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      };
+    }
+    if (provider === AiProvider.GOOGLE) {
+      return {};
+    }
+    return { Authorization: `Bearer ${apiKey}` };
   }
 }

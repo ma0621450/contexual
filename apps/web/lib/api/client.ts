@@ -1,4 +1,14 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? '';
+let refreshPromise: Promise<boolean> | null = null;
+const AUTH_ROUTES_WITHOUT_REFRESH = new Set([
+  '/auth/login',
+  '/auth/register',
+  '/auth/verify-email',
+  '/auth/forgot-password',
+  '/auth/reset-password',
+  '/auth/refresh',
+  '/auth/logout',
+]);
 
 type ApiResult<T> =
   | { ok: true; data: T }
@@ -17,18 +27,54 @@ function getErrorMessage(body: Record<string, unknown>): string {
   return 'Request failed';
 }
 
+async function refreshSession(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = fetch(`${API_BASE}/api/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+    })
+      .then((response) => response.ok)
+      .catch(() => false)
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+
+  return refreshPromise;
+}
+
+async function fetchWithRefresh(
+  path: string,
+  options: RequestInit,
+): Promise<Response> {
+  const request = () =>
+    fetch(`${API_BASE}/api${path}`, {
+      ...options,
+      credentials: 'include',
+      headers:
+        options.body instanceof FormData
+          ? options.headers
+          : {
+              'Content-Type': 'application/json',
+              ...options.headers,
+            },
+    });
+
+  let response = await request();
+  if (response.status === 401 && !AUTH_ROUTES_WITHOUT_REFRESH.has(path)) {
+    if (await refreshSession()) {
+      response = await request();
+    }
+  }
+
+  return response;
+}
+
 export async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<ApiResult<T>> {
-  const response = await fetch(`${API_BASE}/api${path}`, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  });
+  const response = await fetchWithRefresh(path, options);
 
   const data = (await response.json().catch(() => ({}))) as T &
     Record<string, unknown>;
@@ -44,6 +90,7 @@ export async function apiFetch<T>(
 }
 
 export type ChatStreamEvent =
+  | { type: 'start'; conversationId: string; title: string }
   | { type: 'token'; content: string }
   | {
       type: 'done';
@@ -59,13 +106,16 @@ export type ChatStreamEvent =
   | { type: 'error'; message: string };
 
 export async function streamChat(
-  body: { conversationId?: string; content: string },
+  body: {
+    conversationId?: string;
+    content: string;
+    model?: string;
+    attachmentIds?: string[];
+  },
   onEvent: (event: ChatStreamEvent) => void,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const response = await fetch(`${API_BASE}/api/chat/messages/stream`, {
+  const response = await fetchWithRefresh('/chat/messages/stream', {
     method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 

@@ -15,12 +15,56 @@ import type { AuthUser } from '../auth/auth.types';
 import {
   CreateOrganizationDto,
   JoinOrganizationDto,
+  SwitchOrganizationDto,
+  TransferAdminDto,
 } from './dto/onboarding.dto';
 import { OnboardingService } from './onboarding.service';
 
 @Controller('onboarding')
 export class OnboardingController {
   constructor(private readonly onboardingService: OnboardingService) {}
+
+  @Get('organizations')
+  @UseGuards(JwtAuthGuard)
+  listOrganizations(@CurrentUser() user: AuthUser) {
+    return this.onboardingService.listOrganizations(user.id);
+  }
+
+  @Post('switch-organization')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  switchOrganization(
+    @Body() dto: SwitchOrganizationDto,
+    @CurrentUser() user: AuthUser,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.onboardingService.switchOrganization(
+      user,
+      dto.organizationId,
+      res,
+    );
+  }
+
+  @Post('transfer-admin')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  transferAdmin(
+    @Body() dto: TransferAdminDto,
+    @CurrentUser() user: AuthUser,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.onboardingService.transferAdmin(user, dto.targetUserId, res);
+  }
+
+  @Post('leave-organization')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  leaveOrganization(
+    @CurrentUser() user: AuthUser,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.onboardingService.leaveOrganization(user, res);
+  }
 
   @Post('create-organization')
   @UseGuards(JwtAuthGuard)

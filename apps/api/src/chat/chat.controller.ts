@@ -55,6 +55,7 @@ export class ChatController {
       conversationId: dto.conversationId,
       content: dto.content,
       model: dto.model,
+      attachmentIds: dto.attachmentIds,
     });
   }
 
@@ -82,6 +83,7 @@ export class ChatController {
           conversationId: dto.conversationId,
           content: dto.content,
           model: dto.model,
+          attachmentIds: dto.attachmentIds,
         },
       )) {
         writeEvent(event);

@@ -25,17 +25,41 @@ export class AuthCookieService {
     return expiresAt;
   }
 
+  private getAccessTokenExpirySeconds(): number {
+    const configured =
+      this.configService.get<string>('ACCESS_TOKEN_EXPIRY')?.trim() ?? '15m';
+    const match = /^(\d+)(s|m|h|d)?$/i.exec(configured);
+
+    if (!match) {
+      return 15 * 60;
+    }
+
+    const value = Number(match[1]);
+    const unit = match[2]?.toLowerCase() ?? 's';
+    const multiplier =
+      {
+        s: 1,
+        m: 60,
+        h: 60 * 60,
+        d: 24 * 60 * 60,
+      }[unit] ?? 1;
+
+    return value * multiplier;
+  }
+
   signAccessToken(user: AuthUser): string {
     const payload: AccessTokenPayload = {
       sub: user.id,
       email: user.email,
       emailVerified: user.emailVerifiedAt !== null,
-      hasMembership: user.memberships.length > 0,
+      hasMembership: user.memberships.some(
+        (membership) => !membership.suspended,
+      ),
       sessionVersion: user.sessionVersion,
     };
 
     return this.jwtService.sign(payload, {
-      expiresIn: 15 * 60,
+      expiresIn: this.getAccessTokenExpirySeconds(),
     });
   }
 
@@ -45,13 +69,7 @@ export class AuthCookieService {
     );
     const isProduction = process.env.NODE_ENV === 'production';
 
-    res.cookie(ACCESS_TOKEN_COOKIE, accessToken, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 15 * 60 * 1000,
-    });
+    this.setAccessCookie(res, accessToken);
 
     res.cookie(REFRESH_TOKEN_COOKIE, refreshToken, {
       httpOnly: true,
@@ -59,6 +77,19 @@ export class AuthCookieService {
       sameSite: 'lax',
       path: '/',
       maxAge: refreshDays * 24 * 60 * 60 * 1000,
+    });
+  }
+
+  setAccessCookie(res: Response, accessToken: string) {
+    const accessTokenExpirySeconds = this.getAccessTokenExpirySeconds();
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    res.cookie(ACCESS_TOKEN_COOKIE, accessToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: accessTokenExpirySeconds * 1000,
     });
   }
 
@@ -71,7 +102,7 @@ export class AuthCookieService {
     if (!user.emailVerifiedAt) {
       return '/verify-email';
     }
-    if (user.memberships.length === 0) {
+    if (!user.memberships.some((membership) => !membership.suspended)) {
       return '/onboarding';
     }
     return '/dashboard';

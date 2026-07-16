@@ -39,6 +39,17 @@ enum InviteStatus {
   REVOKED
 }
 
+enum MemoryScope {
+  USER
+  ORGANIZATION
+}
+
+enum UsageReservationStatus {
+  PENDING
+  COMPLETED
+  RELEASED
+}
+
 model User {
   id              String   @id @default(cuid())
   email           String   @unique
@@ -49,6 +60,7 @@ model User {
 
   emailVerificationOtpHash      String?
   emailVerificationOtpExpiresAt DateTime?
+  emailVerificationOtpSentAt    DateTime?
   passwordResetTokenHash        String?
   passwordResetTokenExpiresAt   DateTime?
 
@@ -57,6 +69,8 @@ model User {
 
   memberships     Membership[]
   conversations   Conversation[]
+  memories        Memory[]
+  uploadedFiles   StoredFile[]
   auditLogs       AuditLog[]       @relation("AuditActor")
   sentInvites     Invite[]         @relation("InviteSender")
   refreshTokens   RefreshToken[]
@@ -75,6 +89,11 @@ model Organization {
 
   planTier  PlanTier @default(FREE)
   maxMembers Int     @default(3)
+  monthlySpendLimitCents Int? @default(0)
+  monthlySpendUsedCents  Int  @default(0)
+  monthlyTokenLimit      Int? @default(0)
+  monthlyTokensUsed      Int  @default(0)
+  usagePeriodStartedAt   DateTime @default(now())
 
   apiKeyCiphertext String?
   apiKeyIv         String?
@@ -90,11 +109,14 @@ model Organization {
 
   memberships   Membership[]
   conversations Conversation[]
+  memories      Memory[]
+  files         StoredFile[]
   invites       Invite[]
   auditLogs     AuditLog[]
   activeUsers   User[]        @relation("ActiveOrg")
   stripeEvents  StripeEvent[]
   usageLogs     UsageLog[]
+  usageReservations UsageReservation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -110,12 +132,15 @@ model Membership {
 
   spendLimitCents     Int?     @default(0)
   spendUsedCents       Int     @default(0)
+  tokenLimit           Int?    @default(0)
+  tokensUsed           Int     @default(0)
   spendPeriodStartedAt DateTime @default(now())
 
   suspended Boolean @default(false)
 
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  usageReservations UsageReservation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -169,6 +194,25 @@ model Conversation {
   @@index([organizationId, userId, updatedAt])
 }
 
+model Memory {
+  id             String      @id @default(cuid())
+  organizationId String
+  userId         String?
+  scope          MemoryScope @default(USER)
+  title          String
+  content        String      @db.Text
+  enabled        Boolean     @default(true)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, scope, enabled])
+  @@index([organizationId, userId, enabled])
+}
+
 model Message {
   id             String      @id @default(cuid())
   conversationId String
@@ -181,10 +225,42 @@ model Message {
   completionTokens Int?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachments MessageAttachment[]
 
   createdAt DateTime @default(now())
 
   @@index([conversationId, createdAt])
+}
+
+model StoredFile {
+  id             String @id @default(cuid())
+  organizationId String
+  uploadedById   String
+  filename       String
+  mimeType       String
+  sizeBytes      Int
+  storageKey     String @unique
+  extractedText  String? @db.Text
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadedBy   User         @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  attachments MessageAttachment[]
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, uploadedById])
+}
+
+model MessageAttachment {
+  messageId String
+  fileId    String
+
+  message Message    @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  file    StoredFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, fileId])
+  @@index([fileId])
 }
 
 model UsageLog {
@@ -206,6 +282,25 @@ model UsageLog {
 
   @@index([organizationId, createdAt])
   @@index([organizationId, userId, createdAt])
+}
+
+model UsageReservation {
+  id                String                 @id @default(cuid())
+  organizationId    String
+  membershipId      String
+  requestId         String                 @unique
+  reservedTokens    Int
+  reservedCostCents Int
+  status            UsageReservationStatus @default(PENDING)
+  expiresAt         DateTime
+  createdAt         DateTime               @default(now())
+  completedAt       DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membership   Membership   @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status, expiresAt])
+  @@index([membershipId, status, expiresAt])
 }
 
 model AuditLog {

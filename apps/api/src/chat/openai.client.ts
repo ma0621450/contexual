@@ -39,11 +39,12 @@ export class OpenAiClient {
     model: string,
     messages: ChatCompletionMessage[],
     stream: boolean,
+    baseUrl = 'https://api.openai.com/v1',
   ): Promise<Response> {
     let response: Response;
 
     try {
-      response = await fetch('https://api.openai.com/v1/chat/completions', {
+      response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -87,12 +88,14 @@ export class OpenAiClient {
     apiKey: string,
     model: string,
     messages: ChatCompletionMessage[],
+    baseUrl?: string,
   ): Promise<ChatCompletionResult> {
     const response = await this.requestCompletion(
       apiKey,
       model,
       messages,
       false,
+      baseUrl,
     );
     const body = (await response.json().catch(() => ({}))) as OpenAiResponse;
 
@@ -117,12 +120,14 @@ export class OpenAiClient {
     apiKey: string,
     model: string,
     messages: ChatCompletionMessage[],
+    baseUrl?: string,
   ): AsyncGenerator<OpenAiStreamPart> {
     const response = await this.requestCompletion(
       apiKey,
       model,
       messages,
       true,
+      baseUrl,
     );
 
     if (!response.ok) {
@@ -139,7 +144,10 @@ export class OpenAiClient {
     let buffer = '';
 
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = (await reader.read()) as {
+        done: boolean;
+        value?: Uint8Array;
+      };
       if (done) {
         break;
       }

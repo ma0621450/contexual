@@ -4,8 +4,9 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { loginSchema } from '@/lib/validations/auth';
 import { apiFetch } from '@/lib/api/client';
-import { AuthLayout, AuthLink } from '@/components/auth/AuthLayout';
+import { AuthError, AuthLayout, AuthLink } from '@/components/auth/AuthLayout';
 import { FormField } from '@/components/auth/FormField';
+import { Button } from '@/components/ui/button';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -14,6 +15,11 @@ export default function LoginPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  function getSafeReturnPath(): string | null {
+    const from = new URLSearchParams(window.location.search).get('from');
+    return from?.startsWith('/') && !from.startsWith('//') ? from : null;
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -45,7 +51,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.push(result.data.redirectTo ?? '/dashboard');
+    router.push(getSafeReturnPath() ?? result.data.redirectTo ?? '/dashboard');
     router.refresh();
   }
 
@@ -60,11 +66,7 @@ export default function LoginPage() {
       }
     >
       <form onSubmit={handleSubmit} className="space-y-5">
-        {formError ? (
-          <p className="rounded-lg border border-semantic-error/20 bg-semantic-error/5 px-3 py-2 text-sm text-semantic-error">
-            {formError}
-          </p>
-        ) : null}
+        <AuthError>{formError}</AuthError>
 
         <FormField
           label="Email"
@@ -76,30 +78,22 @@ export default function LoginPage() {
           error={fieldErrors.email}
         />
 
-        <div>
-          <div className="mb-1.5 flex items-center justify-between">
-            <label htmlFor="password" className="text-sm font-medium text-text-primary">
-              Password
-            </label>
+        <FormField
+          label="Password"
+          name="password"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          error={fieldErrors.password}
+          labelAction={
             <AuthLink href="/forgot-password">Forgot password?</AuthLink>
-          </div>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            className={`auth-input ${fieldErrors.password ? 'auth-input-error' : ''}`}
-          />
-          {fieldErrors.password ? (
-            <p className="mt-1.5 text-sm text-semantic-error">{fieldErrors.password}</p>
-          ) : null}
-        </div>
+          }
+        />
 
-        <button type="submit" className="btn-primary" disabled={loading}>
-          {loading ? 'Signing in...' : 'Sign in'}
-        </button>
+        <Button type="submit" className="w-full" disabled={loading}>
+          {loading ? 'Signing in…' : 'Sign in'}
+        </Button>
       </form>
     </AuthLayout>
   );

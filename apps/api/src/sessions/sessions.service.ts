@@ -28,6 +28,11 @@ export class SessionsService {
     this.authCookieService.setAuthCookies(res, accessToken, refreshToken);
   }
 
+  refreshAccess(user: AuthUser, res: Response) {
+    const accessToken = this.authCookieService.signAccessToken(user);
+    this.authCookieService.setAccessCookie(res, accessToken);
+  }
+
   async refresh(refreshToken: string | undefined, res: Response) {
     if (!refreshToken) {
       throw new UnauthorizedException();
@@ -40,7 +45,12 @@ export class SessionsService {
         user: {
           include: {
             memberships: {
-              select: { id: true, organizationId: true, role: true },
+              select: {
+                id: true,
+                organizationId: true,
+                role: true,
+                suspended: true,
+              },
             },
           },
         },
@@ -66,12 +76,7 @@ export class SessionsService {
       throw new UnauthorizedException('Refresh token expired');
     }
 
-    await this.prisma.refreshToken.update({
-      where: { id: storedToken.id },
-      data: { revokedAt: new Date() },
-    });
-
-    await this.createSession(storedToken.user, res);
+    this.refreshAccess(storedToken.user, res);
     return { ok: true };
   }
 

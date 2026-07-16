@@ -63,6 +63,13 @@ export class AuthController {
     return this.authService.verifyEmail(user, dto.otp, res);
   }
 
+  @Post('resend-verification')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  resendVerification(@CurrentUser() user: AuthUser) {
+    return this.authService.resendVerification(user);
+  }
+
   @Post('refresh')
   @HttpCode(200)
   async refresh(

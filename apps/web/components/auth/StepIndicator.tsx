@@ -1,3 +1,5 @@
+import { cn } from '@/lib/utils';
+
 type StepIndicatorProps = {
   totalSteps: number;
   currentStep: number;
@@ -14,13 +16,14 @@ export function StepIndicator({ totalSteps, currentStep }: StepIndicatorProps) {
         return (
           <div
             key={step}
-            className={`h-2.5 rounded-full transition-all ${
+            className={cn(
+              'h-2 rounded-full transition-all',
               isActive
-                ? 'w-8 bg-brand-primary'
+                ? 'w-8 bg-primary'
                 : isComplete
-                  ? 'w-2.5 bg-brand-primary/60'
-                  : 'w-2.5 bg-border'
-            }`}
+                  ? 'w-2 bg-primary/50'
+                  : 'w-2 bg-border',
+            )}
             aria-label={`Step ${step} of ${totalSteps}`}
           />
         );

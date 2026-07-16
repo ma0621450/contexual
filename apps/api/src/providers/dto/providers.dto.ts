@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
-import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 import { AiProvider } from '@contexual/database';
+import { SUPPORTED_MODEL_IDS } from '../../chat/model-catalog';
 
 export class ConnectProviderDto {
   @IsEnum(AiProvider, { message: 'Invalid provider' })
@@ -18,5 +19,6 @@ export class ConnectProviderDto {
     typeof value === 'string' ? value.trim() : value,
   )
   @IsString()
+  @IsIn(SUPPORTED_MODEL_IDS)
   defaultModel?: string;
 }

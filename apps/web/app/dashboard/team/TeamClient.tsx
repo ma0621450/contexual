@@ -10,6 +10,22 @@ import type {
   TeamOverview,
 } from '@/lib/api/server';
 import { inviteMemberSchema } from '@/lib/validations/team';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 type TeamClientProps = {
   currentUserId: string;
@@ -155,111 +171,165 @@ export function TeamClient({
     }
   }
 
+  async function transferAdmin(targetUserId: string) {
+    if (
+      pendingAction ||
+      !window.confirm('Transfer your admin access to this member?')
+    ) {
+      return;
+    }
+    setPendingAction(`transfer-${targetUserId}`);
+    const result = await apiFetch('/onboarding/transfer-admin', {
+      method: 'POST',
+      body: JSON.stringify({ targetUserId }),
+    });
+    if (result.ok) {
+      setNotice('Admin access transferred.');
+      refresh();
+    } else {
+      setFormError(result.error);
+    }
+    setPendingAction(null);
+  }
+
+  async function leaveOrganization() {
+    if (
+      pendingAction ||
+      !window.confirm('Leave this organization? You may lose access immediately.')
+    ) {
+      return;
+    }
+    setPendingAction('leave');
+    const result = await apiFetch<{ redirectTo?: string }>(
+      '/onboarding/leave-organization',
+      { method: 'POST' },
+    );
+    if (result.ok) {
+      router.push(result.data.redirectTo ?? '/onboarding');
+      router.refresh();
+      return;
+    }
+    setFormError(result.error);
+    setPendingAction(null);
+  }
+
   return (
-    <main className="mx-auto max-w-4xl px-6 py-12">
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-text-primary">Team</h1>
-        <p className="mt-1 text-sm text-text-muted">
-          Manage your organization&apos;s members and invitations.
-        </p>
+    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight">Team</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Manage your organization&apos;s members and invitations.
+          </p>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={leaveOrganization}
+          disabled={pendingAction === 'leave'}
+          className="text-destructive"
+        >
+          {pendingAction === 'leave' ? 'Leaving…' : 'Leave organization'}
+        </Button>
       </div>
 
       {overview ? (
-        <div className="mb-6 rounded-xl border border-border bg-surface-card p-5">
-          <div className="flex items-center justify-between">
+        <Card className="mb-6 py-5">
+          <CardContent className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-text-primary">
-                {overview.name}
-              </p>
-              <p className="mt-1 text-xs text-text-muted">
+              <p className="text-sm font-medium">{overview.name}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
                 Plan: {overview.planTier}
               </p>
             </div>
             <div className="text-right">
-              <p className="text-sm font-medium text-text-primary">
+              <p className="text-sm font-medium">
                 {overview.memberCount} / {overview.maxMembers} members
               </p>
-              <p className="mt-1 text-xs text-text-muted">
+              <p className="mt-1 text-xs text-muted-foreground">
                 {overview.pendingInvites} pending · {overview.seatsRemaining}{' '}
                 seats left
               </p>
             </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       ) : null}
 
       {formError ? (
-        <p className="mb-4 rounded-lg border border-semantic-error/20 bg-semantic-error/5 px-3 py-2 text-sm text-semantic-error">
+        <p className="mb-4 rounded-lg border border-destructive/25 bg-destructive/8 px-3 py-2 text-sm text-destructive">
           {formError}
         </p>
       ) : null}
 
       {notice ? (
-        <p className="mb-4 rounded-lg border border-brand-primary/20 bg-brand-tint px-3 py-2 text-sm text-brand-primary">
+        <p className="mb-4 rounded-lg border border-border bg-accent px-3 py-2 text-sm text-accent-foreground">
           {notice}
         </p>
       ) : null}
 
       {isAdmin ? (
-        <section className="mb-8 rounded-xl border border-border bg-surface-card p-6">
-          <h2 className="text-base font-semibold text-text-primary">
-            Invite a member
-          </h2>
-          <form
-            onSubmit={handleInvite}
-            className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-start"
-          >
-            <div className="flex-1">
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => {
-                  setEmail(event.target.value);
-                  setFieldError('');
-                }}
-                placeholder="teammate@company.com"
-                className={`auth-input ${fieldError ? 'auth-input-error' : ''}`}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Invite a member</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form
+              onSubmit={handleInvite}
+              className="flex flex-col gap-3 sm:flex-row sm:items-start"
+            >
+              <div className="flex-1">
+                <Input
+                  type="email"
+                  value={email}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
+                    setFieldError('');
+                  }}
+                  placeholder="teammate@company.com"
+                  aria-invalid={fieldError ? true : undefined}
+                  disabled={seatsFull || pendingAction === 'invite'}
+                />
+                {fieldError ? (
+                  <p className="mt-1.5 text-sm text-destructive">
+                    {fieldError}
+                  </p>
+                ) : null}
+              </div>
+
+              <Select
+                value={role}
+                onValueChange={(value) => setRole(value as OrganizationRole)}
                 disabled={seatsFull || pendingAction === 'invite'}
-              />
-              {fieldError ? (
-                <p className="mt-1.5 text-sm text-semantic-error">
-                  {fieldError}
-                </p>
-              ) : null}
-            </div>
+              >
+                <SelectTrigger className="sm:w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="MEMBER">Member</SelectItem>
+                  <SelectItem value="ADMIN">Admin</SelectItem>
+                </SelectContent>
+              </Select>
 
-            <select
-              value={role}
-              onChange={(event) =>
-                setRole(event.target.value as OrganizationRole)
-              }
-              className="auth-input sm:w-40"
-              disabled={seatsFull || pendingAction === 'invite'}
-            >
-              <option value="MEMBER">Member</option>
-              <option value="ADMIN">Admin</option>
-            </select>
-
-            <button
-              type="submit"
-              className="btn-primary sm:w-auto sm:px-6"
-              disabled={seatsFull || pendingAction === 'invite'}
-            >
-              {pendingAction === 'invite' ? 'Inviting...' : 'Send invite'}
-            </button>
-          </form>
-          {seatsFull ? (
-            <p className="mt-3 text-xs text-text-muted">
-              You have reached your plan&apos;s member limit. Upgrade to invite
-              more.
-            </p>
-          ) : null}
-        </section>
+              <Button
+                type="submit"
+                disabled={seatsFull || pendingAction === 'invite'}
+              >
+                {pendingAction === 'invite' ? 'Inviting…' : 'Send invite'}
+              </Button>
+            </form>
+            {seatsFull ? (
+              <p className="mt-3 text-xs text-muted-foreground">
+                You have reached your plan&apos;s member limit. Upgrade to
+                invite more.
+              </p>
+            ) : null}
+          </CardContent>
+        </Card>
       ) : null}
 
-      <section className="rounded-xl border border-border bg-surface-card">
+      <Card className="gap-0 py-0">
         <div className="border-b border-border px-6 py-4">
-          <h2 className="text-base font-semibold text-text-primary">Members</h2>
+          <h3 className="font-semibold">Members</h3>
         </div>
         <ul className="divide-y divide-border">
           {members.map((member) => {
@@ -267,106 +337,122 @@ export function TeamClient({
             return (
               <li
                 key={member.membershipId}
-                className="flex items-center justify-between px-6 py-4"
+                className="flex flex-wrap items-center justify-between gap-3 px-6 py-4"
               >
                 <div>
-                  <p className="text-sm font-medium text-text-primary">
+                  <p className="text-sm font-medium">
                     {member.name}
                     {isSelf ? (
-                      <span className="ml-2 text-xs text-text-muted">(you)</span>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        (you)
+                      </span>
                     ) : null}
                   </p>
-                  <p className="text-xs text-text-muted">{member.email}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {member.email}
+                  </p>
                 </div>
 
                 <div className="flex items-center gap-3">
                   {isAdmin && !isSelf ? (
-                    <select
+                    <Select
                       value={member.role}
-                      onChange={(event) =>
+                      onValueChange={(value) =>
                         handleRoleChange(
                           member.userId,
-                          event.target.value as OrganizationRole,
+                          value as OrganizationRole,
                         )
                       }
-                      className="auth-input w-28 py-1.5 text-xs"
                       disabled={pendingAction === `role-${member.userId}`}
                     >
-                      <option value="MEMBER">Member</option>
-                      <option value="ADMIN">Admin</option>
-                    </select>
+                      <SelectTrigger size="sm" className="w-28">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="MEMBER">Member</SelectItem>
+                        <SelectItem value="ADMIN">Admin</SelectItem>
+                      </SelectContent>
+                    </Select>
                   ) : (
-                    <span className="rounded-full bg-brand-tint px-2.5 py-1 text-xs font-medium text-brand-primary">
-                      {member.role}
-                    </span>
+                    <Badge variant="secondary">{member.role}</Badge>
                   )}
 
                   {isAdmin && !isSelf ? (
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveMember(member.userId)}
-                      className="text-xs font-medium text-semantic-error hover:underline disabled:opacity-60"
-                      disabled={pendingAction === `remove-${member.userId}`}
-                    >
-                      {pendingAction === `remove-${member.userId}`
-                        ? 'Removing...'
-                        : 'Remove'}
-                    </button>
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => transferAdmin(member.userId)}
+                        disabled={
+                          pendingAction === `transfer-${member.userId}`
+                        }
+                      >
+                        Transfer admin
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive"
+                        onClick={() => handleRemoveMember(member.userId)}
+                        disabled={pendingAction === `remove-${member.userId}`}
+                      >
+                        {pendingAction === `remove-${member.userId}`
+                          ? 'Removing…'
+                          : 'Remove'}
+                      </Button>
+                    </>
                   ) : null}
                 </div>
               </li>
             );
           })}
         </ul>
-      </section>
+      </Card>
 
       {isAdmin && invites.length > 0 ? (
-        <section className="mt-8 rounded-xl border border-border bg-surface-card">
+        <Card className="mt-6 gap-0 py-0">
           <div className="border-b border-border px-6 py-4">
-            <h2 className="text-base font-semibold text-text-primary">
-              Pending invites
-            </h2>
+            <h3 className="font-semibold">Pending invites</h3>
           </div>
           <ul className="divide-y divide-border">
             {invites.map((invite) => (
               <li
                 key={invite.id}
-                className="flex items-center justify-between px-6 py-4"
+                className="flex flex-wrap items-center justify-between gap-3 px-6 py-4"
               >
                 <div>
-                  <p className="text-sm font-medium text-text-primary">
-                    {invite.email}
-                  </p>
-                  <p className="text-xs text-text-muted">
+                  <p className="text-sm font-medium">{invite.email}</p>
+                  <p className="text-xs text-muted-foreground">
                     {invite.role} · expires{' '}
                     {new Date(invite.expiresAt).toLocaleDateString()}
                   </p>
                 </div>
 
-                <div className="flex items-center gap-4">
-                  <button
-                    type="button"
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => copyInviteLink(invite.token)}
-                    className="text-xs font-medium text-brand-primary hover:underline"
                   >
                     Copy link
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive"
                     onClick={() => handleRevokeInvite(invite.id)}
-                    className="text-xs font-medium text-semantic-error hover:underline disabled:opacity-60"
                     disabled={pendingAction === `revoke-${invite.id}`}
                   >
                     {pendingAction === `revoke-${invite.id}`
-                      ? 'Revoking...'
+                      ? 'Revoking…'
                       : 'Revoke'}
-                  </button>
+                  </Button>
                 </div>
               </li>
             ))}
           </ul>
-        </section>
+        </Card>
       ) : null}
-    </main>
+    </div>
   );
 }

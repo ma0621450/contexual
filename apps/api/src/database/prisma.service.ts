@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { PrismaClient } from '@contexual/database';
+import { Prisma, PrismaClient } from '@contexual/database';
 
 @Injectable()
 export class PrismaService
@@ -12,5 +12,17 @@ export class PrismaService
 
   async onModuleDestroy() {
     await this.$disconnect();
+  }
+
+  withTenant<T>(
+    organizationId: string,
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return this.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        SELECT set_config('app.organization_id', ${organizationId}, true)
+      `;
+      return operation(tx);
+    });
   }
 }

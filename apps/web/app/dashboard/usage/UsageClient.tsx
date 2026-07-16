@@ -1,14 +1,41 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { TriangleAlertIcon } from 'lucide-react';
 import { apiFetch } from '@/lib/api/client';
 import type {
   BillingStatus,
   TeamOverview,
   UsageSummary,
 } from '@/lib/api/server';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 type UsageClientProps = {
   usage: UsageSummary | null;
@@ -39,16 +66,19 @@ export function UsageClient({
   >('STARTER');
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState(billingNotice ?? '');
   const [limitDrafts, setLimitDrafts] = useState<Record<string, string>>({});
+  const [tokenLimitDrafts, setTokenLimitDrafts] = useState<
+    Record<string, string>
+  >({});
+  const [organizationSpendLimit, setOrganizationSpendLimit] = useState(
+    String((usage?.organizationLimits?.monthlySpendLimitCents ?? 0) / 100),
+  );
+  const [organizationTokenLimit, setOrganizationTokenLimit] = useState(
+    String(usage?.organizationLimits?.monthlyTokenLimit ?? 0),
+  );
 
   const stripeEnabled = billing?.stripeConfigured ?? false;
-
-  useEffect(() => {
-    if (billingNotice) {
-      setNotice(billingNotice);
-    }
-  }, [billingNotice]);
 
   async function handlePlanChange() {
     if (pending) return;
@@ -172,177 +202,298 @@ export function UsageClient({
     }
   }
 
+  async function saveTokenLimit(userId: string) {
+    if (pending) return;
+    const tokenLimit = Number(tokenLimitDrafts[userId]);
+    if (!Number.isInteger(tokenLimit) || tokenLimit < 0) {
+      setError('Enter a whole token amount (0 = unlimited).');
+      return;
+    }
+    setPending(`token-limit-${userId}`);
+    setError('');
+    const result = await apiFetch(
+      `/organizations/members/${userId}/token-limit`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ tokenLimit }),
+      },
+    );
+    if (result.ok) {
+      setNotice('Token limit updated.');
+      router.refresh();
+    } else {
+      setError(result.error);
+    }
+    setPending(null);
+  }
+
+  async function saveOrganizationLimits() {
+    const spendDollars = Number(organizationSpendLimit);
+    const monthlyTokenLimit = Number(organizationTokenLimit);
+    if (
+      spendDollars < 0 ||
+      !Number.isInteger(monthlyTokenLimit) ||
+      monthlyTokenLimit < 0
+    ) {
+      setError('Enter valid non-negative organization limits.');
+      return;
+    }
+    setPending('organization-limits');
+    setError('');
+    const result = await apiFetch('/organizations/usage-limits', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        monthlySpendLimitCents: Math.round(spendDollars * 100),
+        monthlyTokenLimit,
+      }),
+    });
+    if (result.ok) {
+      setNotice('Organization limits updated.');
+      router.refresh();
+    } else {
+      setError(result.error);
+    }
+    setPending(null);
+  }
+
+  const organizationAlerts = [
+    {
+      label: 'budget',
+      used: usage?.organizationLimits?.monthlySpendUsedCents ?? 0,
+      limit: usage?.organizationLimits?.monthlySpendLimitCents ?? 0,
+    },
+    {
+      label: 'token cap',
+      used: usage?.organizationLimits?.monthlyTokensUsed ?? 0,
+      limit: usage?.organizationLimits?.monthlyTokenLimit ?? 0,
+    },
+  ].filter(({ used, limit }) => limit > 0 && used / limit >= 0.8);
+
   return (
-    <main className="mx-auto max-w-5xl px-6 py-12">
-      <div className="mb-8 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-text-primary">
-            Usage &amp; Billing
-          </h1>
-          <p className="mt-1 text-sm text-text-muted">
-            Track AI spend and manage your plan and per-member limits.
-          </p>
-        </div>
-        <Link
-          href="/dashboard"
-          className="text-sm text-text-muted hover:text-text-primary"
-        >
-          Back to dashboard
-        </Link>
+    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+      <div className="mb-6">
+        <h2 className="text-xl font-semibold tracking-tight">Usage &amp; billing</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Track this month&apos;s AI spend and manage plan and member limits.
+        </p>
       </div>
 
       {error ? (
-        <p className="mb-4 rounded-lg border border-semantic-error/20 bg-semantic-error/5 px-3 py-2 text-sm text-semantic-error">
+        <p className="mb-4 rounded-lg border border-destructive/25 bg-destructive/8 px-3 py-2 text-sm text-destructive">
           {error}
         </p>
       ) : null}
       {notice ? (
-        <p className="mb-4 rounded-lg border border-brand-primary/20 bg-brand-tint px-3 py-2 text-sm text-brand-primary">
+        <p className="mb-4 rounded-lg border border-border bg-accent px-3 py-2 text-sm text-accent-foreground">
           {notice}
         </p>
       ) : null}
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-border bg-surface-card p-5">
-          <p className="text-sm text-text-muted">Total estimated cost</p>
-          <p className="mt-1 text-2xl font-semibold text-text-primary">
-            {formatCents(usage?.totals.estimatedCostCents ?? 0)}
-          </p>
-        </div>
-        <div className="rounded-xl border border-border bg-surface-card p-5">
-          <p className="text-sm text-text-muted">Prompt tokens</p>
-          <p className="mt-1 text-2xl font-semibold text-text-primary">
-            {(usage?.totals.promptTokens ?? 0).toLocaleString()}
-          </p>
-        </div>
-        <div className="rounded-xl border border-border bg-surface-card p-5">
-          <p className="text-sm text-text-muted">Completion tokens</p>
-          <p className="mt-1 text-2xl font-semibold text-text-primary">
-            {(usage?.totals.completionTokens ?? 0).toLocaleString()}
-          </p>
-        </div>
-      </div>
-
-      <section className="mt-8 rounded-xl border border-border bg-surface-card p-6">
-        <h2 className="text-base font-semibold text-text-primary">Plan</h2>
-        <p className="mt-1 text-sm text-text-muted">
-          Current plan: {overview?.planTier ?? 'FREE'} · up to{' '}
-          {overview?.maxMembers ?? 0} members
-          {billing?.subscriptionStatus
-            ? ` · subscription ${billing.subscriptionStatus}`
-            : ''}
+      {organizationAlerts.map(({ label, used, limit }) => (
+        <p
+          key={label}
+          className="mb-4 flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning"
+        >
+          <TriangleAlertIcon className="size-4 shrink-0" />
+          Organization {label} is{' '}
+          {used >= limit
+            ? 'fully used'
+            : `${Math.floor((used / limit) * 100)}% used`}
           .
         </p>
+      ))}
 
-        {stripeEnabled ? (
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <select
-              value={upgradePlan}
-              onChange={(event) =>
-                setUpgradePlan(
-                  event.target.value as (typeof PAID_PLANS)[number],
-                )
-              }
-              className="auth-input w-40"
-            >
-              {PAID_PLANS.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={handleCheckout}
-              className="btn-primary w-auto shrink-0"
-              disabled={pending === 'checkout'}
-            >
-              {pending === 'checkout' ? 'Redirecting...' : 'Upgrade via Stripe'}
-            </button>
-            {billing?.hasBillingAccount ? (
-              <button
-                type="button"
-                onClick={handlePortal}
-                className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-surface-page disabled:opacity-60"
-                disabled={pending === 'portal'}
-              >
-                {pending === 'portal' ? 'Opening...' : 'Manage billing'}
-              </button>
-            ) : null}
-          </div>
-        ) : (
-          <>
-            <p className="mt-2 text-xs text-text-muted">
-              Stripe is not configured — plan changes apply immediately without
-              payment (dev mode).
-            </p>
-            <div className="mt-4 flex items-center gap-3">
-              <select
-                value={plan}
-                onChange={(event) =>
-                  setPlan(event.target.value as typeof plan)
+      <div className="grid gap-4 sm:grid-cols-3">
+        {[
+          {
+            label: 'Total estimated cost',
+            value: formatCents(usage?.totals.estimatedCostCents ?? 0),
+          },
+          {
+            label: 'Prompt tokens',
+            value: (usage?.totals.promptTokens ?? 0).toLocaleString(),
+          },
+          {
+            label: 'Completion tokens',
+            value: (usage?.totals.completionTokens ?? 0).toLocaleString(),
+          },
+        ].map((stat) => (
+          <Card key={stat.label} className="gap-2 py-5">
+            <CardContent>
+              <p className="text-sm text-muted-foreground">{stat.label}</p>
+              <p className="mt-1 text-2xl font-semibold tracking-tight">
+                {stat.value}
+              </p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Plan</CardTitle>
+          <CardDescription>
+            Current plan: {overview?.planTier ?? 'FREE'} · up to{' '}
+            {overview?.maxMembers ?? 0} members
+            {billing?.subscriptionStatus
+              ? ` · subscription ${billing.subscriptionStatus}`
+              : ''}
+            .
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {stripeEnabled ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <Select
+                value={upgradePlan}
+                onValueChange={(value) =>
+                  setUpgradePlan(value as (typeof PAID_PLANS)[number])
                 }
-                className="auth-input w-40"
               >
-                {PLANS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={handlePlanChange}
-                className="btn-primary w-auto shrink-0"
-                disabled={pending === 'plan'}
-              >
-                {pending === 'plan' ? 'Updating...' : 'Update plan'}
-              </button>
+                <SelectTrigger className="w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAID_PLANS.map((p) => (
+                    <SelectItem key={p} value={p}>
+                      {p}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={handleCheckout} disabled={pending === 'checkout'}>
+                {pending === 'checkout' ? 'Redirecting…' : 'Upgrade via Stripe'}
+              </Button>
+              {billing?.hasBillingAccount ? (
+                <Button
+                  variant="outline"
+                  onClick={handlePortal}
+                  disabled={pending === 'portal'}
+                >
+                  {pending === 'portal' ? 'Opening…' : 'Manage billing'}
+                </Button>
+              ) : null}
             </div>
-          </>
-        )}
-      </section>
+          ) : (
+            <>
+              <p className="mb-4 text-xs text-muted-foreground">
+                Stripe is not configured — plan changes apply immediately
+                without payment (dev mode).
+              </p>
+              <div className="flex items-center gap-3">
+                <Select
+                  value={plan}
+                  onValueChange={(value) => setPlan(value as typeof plan)}
+                >
+                  <SelectTrigger className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PLANS.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  onClick={handlePlanChange}
+                  disabled={pending === 'plan'}
+                >
+                  {pending === 'plan' ? 'Updating…' : 'Update plan'}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
-      <section className="mt-8 rounded-xl border border-border bg-surface-card p-6">
-        <h2 className="text-base font-semibold text-text-primary">
-          Per-member usage
-        </h2>
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="text-text-muted">
-              <tr className="border-b border-border">
-                <th className="pb-2 pr-4 font-medium">Member</th>
-                <th className="pb-2 pr-4 font-medium">Spend</th>
-                <th className="pb-2 pr-4 font-medium">Limit ($, 0=∞)</th>
-                <th className="pb-2 pr-4 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Organization monthly limits</CardTitle>
+          <CardDescription>
+            Set either value to 0 for unlimited. Current usage:{' '}
+            {formatCents(usage?.organizationLimits?.monthlySpendUsedCents ?? 0)}{' '}
+            and{' '}
+            {(
+              usage?.organizationLimits?.monthlyTokensUsed ?? 0
+            ).toLocaleString()}{' '}
+            tokens.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="org-budget">Budget ($)</Label>
+              <Input
+                id="org-budget"
+                value={organizationSpendLimit}
+                onChange={(event) =>
+                  setOrganizationSpendLimit(event.target.value)
+                }
+                inputMode="decimal"
+                className="w-32"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="org-tokens">Token cap</Label>
+              <Input
+                id="org-tokens"
+                value={organizationTokenLimit}
+                onChange={(event) =>
+                  setOrganizationTokenLimit(event.target.value)
+                }
+                inputMode="numeric"
+                className="w-40"
+              />
+            </div>
+            <Button
+              onClick={saveOrganizationLimits}
+              disabled={pending === 'organization-limits'}
+            >
+              Save limits
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Per-member usage</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Member</TableHead>
+                <TableHead>Usage</TableHead>
+                <TableHead>Spend cap ($)</TableHead>
+                <TableHead>Token cap</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {(usage?.members ?? []).map((member) => (
-                <tr key={member.userId} className="border-b border-border">
-                  <td className="py-3 pr-4">
-                    <div className="font-medium text-text-primary">
-                      {member.name}
-                    </div>
-                    <div className="text-xs text-text-muted">
+                <TableRow key={member.userId}>
+                  <TableCell>
+                    <div className="font-medium">{member.name}</div>
+                    <div className="text-xs text-muted-foreground">
                       {member.email} · {member.role}
                     </div>
-                  </td>
-                  <td className="py-3 pr-4 text-text-primary">
+                  </TableCell>
+                  <TableCell>
                     {formatCents(member.spendUsedCents)}
-                    <span className="text-text-muted">
-                      {' '}
-                      ({member.completionTokens.toLocaleString()} out)
-                    </span>
-                  </td>
-                  <td className="py-3 pr-4">
+                    <div className="text-xs text-muted-foreground">
+                      {member.tokensUsed.toLocaleString()} tokens
+                    </div>
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center gap-2">
-                      <input
-                        className="auth-input w-24"
+                      <Input
+                        className="w-24"
                         inputMode="decimal"
-                        placeholder={((member.spendLimitCents ?? 0) / 100).toFixed(
-                          2,
-                        )}
+                        placeholder={(
+                          (member.spendLimitCents ?? 0) / 100
+                        ).toFixed(2)}
                         value={limitDrafts[member.userId] ?? ''}
                         onChange={(event) =>
                           setLimitDrafts((prev) => ({
@@ -351,42 +502,65 @@ export function UsageClient({
                           }))
                         }
                       />
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => saveLimit(member.userId)}
-                        className="text-sm font-medium text-brand-primary hover:underline disabled:opacity-60"
                         disabled={pending === `limit-${member.userId}`}
                       >
                         Save
-                      </button>
+                      </Button>
                     </div>
-                  </td>
-                  <td className="py-3 pr-4">
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className="w-28"
+                        inputMode="numeric"
+                        placeholder={String(member.tokenLimit ?? 0)}
+                        value={tokenLimitDrafts[member.userId] ?? ''}
+                        onChange={(event) =>
+                          setTokenLimitDrafts((prev) => ({
+                            ...prev,
+                            [member.userId]: event.target.value,
+                          }))
+                        }
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => saveTokenLimit(member.userId)}
+                        disabled={pending === `token-limit-${member.userId}`}
+                      >
+                        Save
+                      </Button>
+                    </div>
+                  </TableCell>
+                  <TableCell>
                     {member.userId === currentUserId ? (
-                      <span className="text-xs text-text-muted">You</span>
+                      <Badge variant="outline">You</Badge>
                     ) : (
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() =>
                           toggleSuspend(member.userId, member.suspended)
                         }
-                        className={`text-sm font-medium hover:underline disabled:opacity-60 ${
-                          member.suspended
-                            ? 'text-brand-primary'
-                            : 'text-semantic-error'
-                        }`}
+                        className={cn(
+                          member.suspended ? 'text-primary' : 'text-destructive',
+                        )}
                         disabled={pending === `suspend-${member.userId}`}
                       >
                         {member.suspended ? 'Reinstate' : 'Suspend'}
-                      </button>
+                      </Button>
                     )}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </main>
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

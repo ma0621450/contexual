@@ -4,8 +4,9 @@ import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { resetPasswordSchema } from '@/lib/validations/auth';
 import { apiFetch } from '@/lib/api/client';
-import { AuthLayout, AuthLink } from '@/components/auth/AuthLayout';
+import { AuthError, AuthLayout, AuthLink } from '@/components/auth/AuthLayout';
 import { FormField } from '@/components/auth/FormField';
+import { Button } from '@/components/ui/button';
 
 export function ResetPasswordClient() {
   const router = useRouter();
@@ -70,7 +71,7 @@ export function ResetPasswordClient() {
           </p>
         }
       >
-        <p className="text-sm text-text-muted">
+        <p className="text-sm text-muted-foreground">
           Open the link from your email, or request a new reset link.
         </p>
       </AuthLayout>
@@ -88,11 +89,7 @@ export function ResetPasswordClient() {
       }
     >
       <form onSubmit={handleSubmit} className="space-y-5">
-        {formError ? (
-          <p className="rounded-lg border border-semantic-error/20 bg-semantic-error/5 px-3 py-2 text-sm text-semantic-error">
-            {formError}
-          </p>
-        ) : null}
+        <AuthError>{formError}</AuthError>
 
         <FormField
           label="New password"
@@ -114,9 +111,9 @@ export function ResetPasswordClient() {
           error={fieldErrors.confirmPassword}
         />
 
-        <button type="submit" className="btn-primary" disabled={loading}>
-          {loading ? 'Updating...' : 'Update password'}
-        </button>
+        <Button type="submit" className="w-full" disabled={loading}>
+          {loading ? 'Updating…' : 'Update password'}
+        </Button>
       </form>
     </AuthLayout>
   );

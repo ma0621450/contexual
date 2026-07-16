@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InviteStatus, MembershipRole, PlanTier } from '@contexual/database';
 import { AuditService } from '../audit/audit.service';
+import { getUtcMonthStart } from '../common/usage/usage-period';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../database/prisma.service';
 import { getPlanLimits } from '../organizations/plan-limits';
@@ -29,6 +30,8 @@ export class MembersService {
   }
 
   async getOverview(organizationId: string) {
+    await this.expireStaleInvites(organizationId);
+
     const organization = await this.prisma.organization.findUnique({
       where: { id: organizationId },
       select: { id: true, name: true, slug: true, planTier: true },
@@ -80,6 +83,8 @@ export class MembersService {
   }
 
   async listInvites(organizationId: string) {
+    await this.expireStaleInvites(organizationId);
+
     const invites = await this.prisma.invite.findMany({
       where: { organizationId, status: InviteStatus.PENDING },
       orderBy: { createdAt: 'desc' },
@@ -111,44 +116,71 @@ export class MembersService {
 
     const normalizedEmail = email.toLowerCase();
 
-    const existingMember = await this.prisma.membership.findFirst({
-      where: { organizationId, user: { email: normalizedEmail } },
-    });
-
-    if (existingMember) {
-      throw new ConflictException(
-        'This person is already a member of the organization',
-      );
-    }
-
-    const existingInvite = await this.prisma.invite.findFirst({
-      where: {
-        organizationId,
-        email: normalizedEmail,
-        status: InviteStatus.PENDING,
-      },
-    });
-
-    if (existingInvite) {
-      throw new ConflictException(
-        'An invitation is already pending for this email',
-      );
-    }
-
-    await this.assertSeatAvailable(organizationId, organization.planTier);
-
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + INVITE_EXPIRY_DAYS);
 
-    const invite = await this.prisma.invite.create({
-      data: {
-        email: normalizedEmail,
-        organizationId,
-        role,
-        token: randomBytes(32).toString('base64url'),
-        invitedById,
-        expiresAt,
-      },
+    const invite = await this.prisma.$transaction(async (tx) => {
+      await tx.organization.update({
+        where: { id: organizationId },
+        data: { updatedAt: new Date() },
+      });
+
+      await tx.invite.updateMany({
+        where: {
+          organizationId,
+          status: InviteStatus.PENDING,
+          expiresAt: { lt: new Date() },
+        },
+        data: { status: InviteStatus.EXPIRED },
+      });
+
+      const [existingMember, existingInvite, memberCount, pendingInvites] =
+        await Promise.all([
+          tx.membership.findFirst({
+            where: { organizationId, user: { email: normalizedEmail } },
+          }),
+          tx.invite.findFirst({
+            where: {
+              organizationId,
+              email: normalizedEmail,
+              status: InviteStatus.PENDING,
+            },
+          }),
+          tx.membership.count({ where: { organizationId } }),
+          tx.invite.count({
+            where: { organizationId, status: InviteStatus.PENDING },
+          }),
+        ]);
+
+      if (existingMember) {
+        throw new ConflictException(
+          'This person is already a member of the organization',
+        );
+      }
+
+      if (existingInvite) {
+        throw new ConflictException(
+          'An invitation is already pending for this email',
+        );
+      }
+
+      const maxMembers = getPlanLimits(organization.planTier).maxMembers;
+      if (memberCount + pendingInvites >= maxMembers) {
+        throw new ForbiddenException(
+          `Your plan allows up to ${maxMembers} members. Upgrade your plan to invite more.`,
+        );
+      }
+
+      return tx.invite.create({
+        data: {
+          email: normalizedEmail,
+          organizationId,
+          role,
+          token: randomBytes(32).toString('base64url'),
+          invitedById,
+          expiresAt,
+        },
+      });
     });
 
     await this.auditService.record({
@@ -180,7 +212,11 @@ export class MembersService {
     };
   }
 
-  async revokeInvite(organizationId: string, inviteId: string) {
+  async revokeInvite(
+    organizationId: string,
+    actingUserId: string,
+    inviteId: string,
+  ) {
     const invite = await this.prisma.invite.findUnique({
       where: { id: inviteId },
     });
@@ -200,7 +236,7 @@ export class MembersService {
 
     await this.auditService.record({
       organizationId,
-      actorId: invite.invitedById,
+      actorId: actingUserId,
       action: 'invite.revoked',
       details: { email: invite.email },
     });
@@ -308,6 +344,10 @@ export class MembersService {
       return { ok: true };
     }
 
+    if (suspended && membership.role === MembershipRole.ADMIN) {
+      await this.assertNotLastAdmin(organizationId, targetUserId);
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.membership.update({
         where: { id: membership.id },
@@ -343,13 +383,19 @@ export class MembersService {
 
     const maxMembers = getPlanLimits(planTier).maxMembers;
 
-    const currentMembers = await this.prisma.membership.count({
-      where: { organizationId },
-    });
+    await this.expireStaleInvites(organizationId);
+    const [currentMembers, pendingInvites] = await Promise.all([
+      this.prisma.membership.count({
+        where: { organizationId },
+      }),
+      this.prisma.invite.count({
+        where: { organizationId, status: InviteStatus.PENDING },
+      }),
+    ]);
 
-    if (currentMembers > maxMembers) {
+    if (currentMembers + pendingInvites > maxMembers) {
       throw new BadRequestException(
-        `This plan allows ${maxMembers} members but the organization has ${currentMembers}. Remove members before downgrading.`,
+        `This plan allows ${maxMembers} seats but the organization has ${currentMembers} members and ${pendingInvites} pending invites. Remove members or revoke invites before downgrading.`,
       );
     }
 
@@ -394,34 +440,94 @@ export class MembersService {
     return { ok: true, limitCents };
   }
 
+  async setTokenLimit(
+    organizationId: string,
+    actingUserId: string,
+    targetUserId: string,
+    tokenLimit: number,
+  ) {
+    const membership = await this.getMembershipOrThrow(
+      organizationId,
+      targetUserId,
+    );
+
+    await this.prisma.membership.update({
+      where: { id: membership.id },
+      data: { tokenLimit },
+    });
+    await this.auditService.record({
+      organizationId,
+      actorId: actingUserId,
+      action: 'member.token_limit_set',
+      details: { targetUserId, tokenLimit },
+    });
+
+    return { ok: true, tokenLimit };
+  }
+
+  async setOrganizationLimits(
+    organizationId: string,
+    actingUserId: string,
+    input: { monthlySpendLimitCents: number; monthlyTokenLimit: number },
+  ) {
+    await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: input,
+    });
+    await this.auditService.record({
+      organizationId,
+      actorId: actingUserId,
+      action: 'organization.usage_limits_set',
+      details: input,
+    });
+
+    return { ok: true, ...input };
+  }
+
   async getUsage(organizationId: string) {
-    const [aggregate, perMember, memberships] = await Promise.all([
-      this.prisma.usageLog.aggregate({
-        where: { organizationId },
-        _sum: {
-          promptTokens: true,
-          completionTokens: true,
-          estimatedCostCents: true,
-        },
-      }),
-      this.prisma.usageLog.groupBy({
-        by: ['userId'],
-        where: { organizationId },
-        _sum: {
-          promptTokens: true,
-          completionTokens: true,
-          estimatedCostCents: true,
-        },
-      }),
-      this.prisma.membership.findMany({
-        where: { organizationId },
-        include: { user: { select: { id: true, name: true, email: true } } },
-      }),
-    ]);
+    const spendPeriodStartedAt =
+      await this.resetStaleSpendPeriods(organizationId);
+
+    const [aggregate, perMember, memberships, organization] = await Promise.all(
+      [
+        this.prisma.usageLog.aggregate({
+          where: { organizationId, createdAt: { gte: spendPeriodStartedAt } },
+          _sum: {
+            promptTokens: true,
+            completionTokens: true,
+            estimatedCostCents: true,
+          },
+        }),
+        this.prisma.usageLog.groupBy({
+          by: ['userId'],
+          where: { organizationId, createdAt: { gte: spendPeriodStartedAt } },
+          _sum: {
+            promptTokens: true,
+            completionTokens: true,
+            estimatedCostCents: true,
+          },
+        }),
+        this.prisma.membership.findMany({
+          where: { organizationId },
+          include: { user: { select: { id: true, name: true, email: true } } },
+        }),
+        this.prisma.organization.findUnique({
+          where: { id: organizationId },
+          select: {
+            monthlySpendLimitCents: true,
+            monthlySpendUsedCents: true,
+            monthlyTokenLimit: true,
+            monthlyTokensUsed: true,
+          },
+        }),
+      ],
+    );
 
     const usageByUser = new Map(perMember.map((row) => [row.userId, row._sum]));
 
     return {
+      spendPeriodStartedAt,
+      organizationLimits: organization,
       totals: {
         promptTokens: aggregate._sum.promptTokens ?? 0,
         completionTokens: aggregate._sum.completionTokens ?? 0,
@@ -437,6 +543,8 @@ export class MembersService {
           suspended: membership.suspended,
           spendLimitCents: membership.spendLimitCents,
           spendUsedCents: membership.spendUsedCents,
+          tokenLimit: membership.tokenLimit,
+          tokensUsed: membership.tokensUsed,
           promptTokens: usage?.promptTokens ?? 0,
           completionTokens: usage?.completionTokens ?? 0,
           estimatedCostCents: usage?.estimatedCostCents ?? 0,
@@ -475,6 +583,7 @@ export class MembersService {
       where: {
         organizationId,
         role: MembershipRole.ADMIN,
+        suspended: false,
         userId: { not: userId },
       },
     });
@@ -486,23 +595,44 @@ export class MembersService {
     }
   }
 
-  private async assertSeatAvailable(
-    organizationId: string,
-    planTier: PlanTier,
-  ) {
-    const maxMembers = getPlanLimits(planTier).maxMembers;
+  private async expireStaleInvites(organizationId: string) {
+    await this.prisma.invite.updateMany({
+      where: {
+        organizationId,
+        status: InviteStatus.PENDING,
+        expiresAt: { lt: new Date() },
+      },
+      data: { status: InviteStatus.EXPIRED },
+    });
+  }
 
-    const [memberCount, pendingInvites] = await Promise.all([
-      this.prisma.membership.count({ where: { organizationId } }),
-      this.prisma.invite.count({
-        where: { organizationId, status: InviteStatus.PENDING },
-      }),
-    ]);
+  private async resetStaleSpendPeriods(organizationId: string) {
+    const currentPeriodStart = getUtcMonthStart();
 
-    if (memberCount + pendingInvites >= maxMembers) {
-      throw new ForbiddenException(
-        `Your plan allows up to ${maxMembers} members. Upgrade your plan to invite more.`,
-      );
-    }
+    await this.prisma.membership.updateMany({
+      where: {
+        organizationId,
+        spendPeriodStartedAt: { lt: currentPeriodStart },
+      },
+      data: {
+        spendUsedCents: 0,
+        tokensUsed: 0,
+        spendPeriodStartedAt: currentPeriodStart,
+      },
+    });
+
+    await this.prisma.organization.updateMany({
+      where: {
+        id: organizationId,
+        usagePeriodStartedAt: { lt: currentPeriodStart },
+      },
+      data: {
+        monthlySpendUsedCents: 0,
+        monthlyTokensUsed: 0,
+        usagePeriodStartedAt: currentPeriodStart,
+      },
+    });
+
+    return currentPeriodStart;
   }
 }

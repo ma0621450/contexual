@@ -5,16 +5,58 @@ import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api/client';
 import type { ProviderStatus } from '@/lib/api/server';
 import { connectProviderSchema } from '@/lib/validations/providers';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+
+const PROVIDER_LABELS: Record<ProviderId, string> = {
+  OPENAI: 'OpenAI',
+  ANTHROPIC: 'Anthropic',
+  GOOGLE: 'Google Gemini',
+  XAI: 'xAI',
+};
 
 type ProvidersClientProps = {
   isAdmin: boolean;
   status: ProviderStatus | null;
 };
 
+type ProviderId = 'OPENAI' | 'ANTHROPIC' | 'GOOGLE' | 'XAI';
+
+const PROVIDER_MODELS: Record<ProviderId, { id: string; label: string }[]> = {
+  OPENAI: [
+    { id: 'gpt-4o-mini', label: 'GPT-4o mini' },
+    { id: 'gpt-4o', label: 'GPT-4o' },
+    { id: 'gpt-4.1', label: 'GPT-4.1' },
+  ],
+  ANTHROPIC: [
+    { id: 'claude-3-5-haiku-latest', label: 'Claude 3.5 Haiku' },
+    { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
+  ],
+  GOOGLE: [
+    { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+  ],
+  XAI: [
+    { id: 'grok-3-mini', label: 'Grok 3 mini' },
+    { id: 'grok-3', label: 'Grok 3' },
+  ],
+};
+
 export function ProvidersClient({ isAdmin, status }: ProvidersClientProps) {
   const router = useRouter();
 
   const [apiKey, setApiKey] = useState('');
+  const [provider, setProvider] = useState<ProviderId>('OPENAI');
   const [defaultModel, setDefaultModel] = useState('');
   const [fieldError, setFieldError] = useState('');
   const [formError, setFormError] = useState('');
@@ -32,7 +74,7 @@ export function ProvidersClient({ isAdmin, status }: ProvidersClientProps) {
     setNotice('');
 
     const parsed = connectProviderSchema.safeParse({
-      provider: 'OPENAI',
+      provider,
       apiKey,
       defaultModel: defaultModel || undefined,
     });
@@ -90,135 +132,156 @@ export function ProvidersClient({ isAdmin, status }: ProvidersClientProps) {
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-text-primary">
-          AI Providers
-        </h1>
-        <p className="mt-1 text-sm text-text-muted">
+    <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+      <div className="mb-6">
+        <h2 className="text-xl font-semibold tracking-tight">AI providers</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
           Connect your organization&apos;s AI provider. Your team uses this key;
           members never manage their own.
         </p>
       </div>
 
       {formError ? (
-        <p className="mb-4 rounded-lg border border-semantic-error/20 bg-semantic-error/5 px-3 py-2 text-sm text-semantic-error">
+        <p className="mb-4 rounded-lg border border-destructive/25 bg-destructive/8 px-3 py-2 text-sm text-destructive">
           {formError}
         </p>
       ) : null}
 
       {notice ? (
-        <p className="mb-4 rounded-lg border border-brand-primary/20 bg-brand-tint px-3 py-2 text-sm text-brand-primary">
+        <p className="mb-4 rounded-lg border border-border bg-accent px-3 py-2 text-sm text-accent-foreground">
           {notice}
         </p>
       ) : null}
 
-      <section className="rounded-xl border border-border bg-surface-card p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-text-primary">OpenAI</h2>
-            <p className="mt-1 text-sm text-text-muted">
-              {connected
-                ? `Connected${status?.defaultModel ? ` · ${status.defaultModel}` : ''}`
-                : 'Not connected'}
-            </p>
-            {connected && status?.connectedByName ? (
-              <p className="mt-1 text-xs text-text-muted">
-                Added by {status.connectedByName}
-              </p>
-            ) : null}
-          </div>
-          <span
-            className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-              connected
-                ? 'bg-brand-tint text-brand-primary'
-                : 'bg-surface-page text-text-muted'
-            }`}
-          >
-            {connected ? 'Active' : 'Inactive'}
-          </span>
-        </div>
-
-        {!isAdmin ? (
-          <p className="mt-4 text-sm text-text-muted">
-            Only organization admins can manage AI providers.
-          </p>
-        ) : connected ? (
-          <div className="mt-6">
-            <button
-              type="button"
-              onClick={handleDisconnect}
-              className="text-sm font-medium text-semantic-error hover:underline disabled:opacity-60"
-              disabled={pending === 'disconnect'}
-            >
-              {pending === 'disconnect'
-                ? 'Disconnecting...'
-                : 'Disconnect provider'}
-            </button>
-          </div>
-        ) : (
-          <form onSubmit={handleConnect} className="mt-6 space-y-4">
+      <Card>
+        <CardContent>
+          <div className="flex items-center justify-between">
             <div>
-              <label
-                htmlFor="apiKey"
-                className="mb-1.5 block text-sm font-medium text-text-primary"
-              >
-                OpenAI API key
-              </label>
-              <input
-                id="apiKey"
-                type="password"
-                autoComplete="off"
-                value={apiKey}
-                onChange={(event) => {
-                  setApiKey(event.target.value);
-                  setFieldError('');
-                }}
-                placeholder="sk-..."
-                className={`auth-input ${fieldError ? 'auth-input-error' : ''}`}
-                disabled={pending === 'connect'}
-              />
-              {fieldError ? (
-                <p className="mt-1.5 text-sm text-semantic-error">
-                  {fieldError}
+              <h3 className="font-semibold">
+                {connected
+                  ? PROVIDER_LABELS[status?.provider as ProviderId] ??
+                    status?.provider
+                  : 'AI provider'}
+              </h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {connected
+                  ? `Connected${status?.defaultModel ? ` · ${status.defaultModel}` : ''}`
+                  : 'Not connected'}
+              </p>
+              {connected && status?.connectedByName ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Added by {status.connectedByName}
                 </p>
               ) : null}
             </div>
+            <Badge variant={connected ? 'success' : 'secondary'}>
+              {connected ? 'Active' : 'Inactive'}
+            </Badge>
+          </div>
 
-            <div>
-              <label
-                htmlFor="defaultModel"
-                className="mb-1.5 block text-sm font-medium text-text-primary"
-              >
-                Default model{' '}
-                <span className="text-text-muted">(optional)</span>
-              </label>
-              <input
-                id="defaultModel"
-                value={defaultModel}
-                onChange={(event) => setDefaultModel(event.target.value)}
-                placeholder="gpt-4o-mini"
-                className="auth-input"
-                disabled={pending === 'connect'}
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="btn-primary"
-              disabled={pending === 'connect'}
-            >
-              {pending === 'connect'
-                ? 'Validating and connecting...'
-                : 'Connect OpenAI'}
-            </button>
-            <p className="text-xs text-text-muted">
-              We validate the key with OpenAI, then store it encrypted. The key
-              is never shown again.
+          {!isAdmin ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              Only organization admins can manage AI providers.
             </p>
-          </form>
-        )}
-      </section>
-    </main>
+          ) : connected ? (
+            <div className="mt-6">
+              <Button
+                variant="outline"
+                className="text-destructive"
+                onClick={handleDisconnect}
+                disabled={pending === 'disconnect'}
+              >
+                {pending === 'disconnect'
+                  ? 'Disconnecting…'
+                  : 'Disconnect provider'}
+              </Button>
+            </div>
+          ) : (
+            <form onSubmit={handleConnect} className="mt-6 space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="provider">Provider</Label>
+                <Select
+                  value={provider}
+                  onValueChange={(value) => {
+                    setProvider(value as ProviderId);
+                    setDefaultModel('');
+                  }}
+                >
+                  <SelectTrigger id="provider">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="OPENAI">OpenAI</SelectItem>
+                    <SelectItem value="ANTHROPIC">Anthropic</SelectItem>
+                    <SelectItem value="GOOGLE">Google Gemini</SelectItem>
+                    <SelectItem value="XAI">xAI</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="apiKey">Provider API key</Label>
+                <Input
+                  id="apiKey"
+                  type="password"
+                  autoComplete="off"
+                  value={apiKey}
+                  onChange={(event) => {
+                    setApiKey(event.target.value);
+                    setFieldError('');
+                  }}
+                  placeholder="sk-…"
+                  aria-invalid={fieldError ? true : undefined}
+                  disabled={pending === 'connect'}
+                />
+                {fieldError ? (
+                  <p className="text-sm text-destructive">{fieldError}</p>
+                ) : null}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="defaultModel">
+                  Default model{' '}
+                  <span className="font-normal text-muted-foreground">
+                    (optional)
+                  </span>
+                </Label>
+                <Select
+                  value={defaultModel || '__default__'}
+                  onValueChange={(value) =>
+                    setDefaultModel(value === '__default__' ? '' : value)
+                  }
+                  disabled={pending === 'connect'}
+                >
+                  <SelectTrigger id="defaultModel">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__default__">
+                      {PROVIDER_MODELS[provider][0]?.label} (recommended)
+                    </SelectItem>
+                    {PROVIDER_MODELS[provider].map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <Button type="submit" disabled={pending === 'connect'}>
+                {pending === 'connect'
+                  ? 'Validating and connecting…'
+                  : `Connect ${PROVIDER_LABELS[provider]}`}
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                We validate the key with the provider, then store it encrypted.
+                The key is never shown again.
+              </p>
+            </form>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

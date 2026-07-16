@@ -17,11 +17,15 @@ export class MailService {
   isConfigured(): boolean {
     return Boolean(
       this.config.get<string>('RESEND_API_KEY') &&
-        this.config.get<string>('EMAIL_FROM'),
+      this.config.get<string>('EMAIL_FROM'),
     );
   }
 
-  async sendVerificationOtp(to: string, name: string, otp: string): Promise<void> {
+  async sendVerificationOtp(
+    to: string,
+    name: string,
+    otp: string,
+  ): Promise<void> {
     await this.send({
       to,
       subject: 'Verify your Contexual email',

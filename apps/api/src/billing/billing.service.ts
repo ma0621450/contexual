@@ -144,9 +144,7 @@ export class BillingService {
     return { url: session.url };
   }
 
-  async createPortalSession(
-    organizationId: string,
-  ): Promise<{ url: string }> {
+  async createPortalSession(organizationId: string): Promise<{ url: string }> {
     const stripe = this.getStripe();
     const organization = await this.prisma.organization.findUnique({
       where: { id: organizationId },
@@ -238,9 +236,7 @@ export class BillingService {
         break;
       }
       case 'customer.subscription.deleted': {
-        organizationId = await this.downgradeToFree(
-          event.data.object as Stripe.Subscription,
-        );
+        organizationId = await this.downgradeToFree(event.data.object);
         break;
       }
       default:
@@ -261,7 +257,7 @@ export class BillingService {
     let subscription: Stripe.Subscription;
 
     if (event.type === 'checkout.session.completed') {
-      const session = event.data.object as Stripe.Checkout.Session;
+      const session = event.data.object;
       if (!session.subscription) {
         return null;
       }

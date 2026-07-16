@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: contexual_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d contexual_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      target: api
+    env_file: apps/api/.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/contexual_dev
+      WEB_URL: http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -c "npm run db:deploy && npm run start:prod --workspace=@repo/api"
+    ports:
+      - "3001:3001"
+    volumes:
+      - uploads:/app/apps/api/.uploads
+
+  web:
+    build:
+      context: .
+      target: web
+    env_file: apps/web/.env
+    environment:
+      INTERNAL_API_URL: http://api:3001
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres-data:
+  uploads:

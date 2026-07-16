@@ -21,3 +21,15 @@ export class JoinOrganizationDto {
   @MinLength(1)
   token!: string;
 }
+
+export class SwitchOrganizationDto {
+  @IsString()
+  @MinLength(1)
+  organizationId!: string;
+}
+
+export class TransferAdminDto {
+  @IsString()
+  @MinLength(1)
+  targetUserId!: string;
+}

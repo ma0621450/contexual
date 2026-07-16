@@ -6,10 +6,12 @@ import {
   createOrganizationSchema,
   joinOrganizationSchema,
 } from '@/lib/validations/auth';
+import { ArrowRightIcon, BuildingIcon, UserPlusIcon } from 'lucide-react';
 import { apiFetch } from '@/lib/api/client';
-import { AuthLayout } from '@/components/auth/AuthLayout';
+import { AuthError, AuthLayout } from '@/components/auth/AuthLayout';
 import { FormField } from '@/components/auth/FormField';
 import { StepIndicator } from '@/components/auth/StepIndicator';
+import { Button } from '@/components/ui/button';
 
 type OnboardingStep = 'choice' | 'create' | 'join' | 'invite-confirm';
 const ORG_NAME_LIMIT = 100;
@@ -29,11 +31,17 @@ export default function OnboardingPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const inviteToken = searchParams.get('invite') ?? '';
+  const createRequested = searchParams.get('action') === 'create';
 
-  const [step, setStep] = useState<OnboardingStep>('choice');
-  const [currentStepNumber, setCurrentStepNumber] = useState(1);
+  const [step, setStep] = useState<OnboardingStep>(
+    createRequested ? 'create' : 'choice',
+  );
+  const [currentStepNumber, setCurrentStepNumber] = useState(
+    createRequested ? 2 : 1,
+  );
   const [organizationName, setOrganizationName] = useState('');
   const [inviteOrgName, setInviteOrgName] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
   const [inviteCode, setInviteCode] = useState(inviteToken);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState('');
@@ -46,18 +54,22 @@ export default function OnboardingPage() {
     async function loadInvitePreview() {
       setPreviewLoading(true);
       try {
-      const result = await apiFetch<{ organizationName?: string }>(
-        `/onboarding/invite-preview?token=${encodeURIComponent(inviteToken)}`,
-      );
+        const result = await apiFetch<{
+          organizationName?: string;
+          email?: string;
+        }>(
+          `/onboarding/invite-preview?token=${encodeURIComponent(inviteToken)}`,
+        );
 
-      if (!result.ok) {
-        setFormError(result.error);
+        if (!result.ok) {
+          setFormError(result.error);
           setStep('choice');
           setCurrentStepNumber(1);
           return;
         }
 
         setInviteOrgName(result.data.organizationName ?? '');
+        setInviteEmail(result.data.email ?? '');
         setInviteCode(inviteToken);
         setStep('invite-confirm');
         setCurrentStepNumber(1);
@@ -168,6 +180,26 @@ export default function OnboardingPage() {
     await handleJoinOrganization(inviteCode);
   }
 
+  async function switchAccount() {
+    if (loading) return;
+    setLoading(true);
+    setFormError('');
+
+    const result = await apiFetch<{ ok: true }>('/auth/logout', {
+      method: 'POST',
+    }).catch(() => ({ ok: false as const, error: 'Unable to reach the server' }));
+
+    if (!result.ok) {
+      setFormError('Unable to sign out. Check your connection and try again.');
+      setLoading(false);
+      return;
+    }
+
+    const returnTo = `/onboarding?invite=${encodeURIComponent(inviteCode)}`;
+    router.replace(`/login?from=${encodeURIComponent(returnTo)}`);
+    router.refresh();
+  }
+
   const subtitle =
     step === 'invite-confirm'
       ? 'Review your invitation below'
@@ -181,14 +213,14 @@ export default function OnboardingPage() {
     <AuthLayout title="Welcome to Contexual" subtitle={subtitle} wide>
       <StepIndicator totalSteps={2} currentStep={currentStepNumber} />
 
-      {formError ? (
-        <p className="mb-5 rounded-lg border border-semantic-error/20 bg-semantic-error/5 px-3 py-2 text-sm text-semantic-error">
-          {formError}
-        </p>
-      ) : null}
+      <div className="mb-5">
+        <AuthError>{formError}</AuthError>
+      </div>
 
       {previewLoading ? (
-        <p className="text-center text-sm text-text-muted">Loading invite...</p>
+        <p className="text-center text-sm text-muted-foreground">
+          Loading invite…
+        </p>
       ) : (
         <div key={step} className="animate-fade-slide-in">
           {step === 'choice' ? (
@@ -196,12 +228,15 @@ export default function OnboardingPage() {
               <button
                 type="button"
                 onClick={selectCreate}
-                className="rounded-xl border border-border bg-surface-card p-6 text-left transition-colors hover:border-brand-primary hover:bg-brand-tint focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
+                className="group rounded-xl border border-border bg-card p-6 text-left transition-colors hover:border-primary hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring/30"
               >
-                <h2 className="text-base font-semibold text-text-primary">
+                <span className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+                  <BuildingIcon className="size-5" />
+                </span>
+                <h2 className="mt-4 text-base font-semibold">
                   Create an organization
                 </h2>
-                <p className="mt-2 text-sm text-text-muted">
+                <p className="mt-2 text-sm text-muted-foreground">
                   Start a new workspace and invite your team later.
                 </p>
               </button>
@@ -209,12 +244,15 @@ export default function OnboardingPage() {
               <button
                 type="button"
                 onClick={selectJoin}
-                className="rounded-xl border border-border bg-surface-card p-6 text-left transition-colors hover:border-brand-primary hover:bg-brand-tint focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
+                className="group rounded-xl border border-border bg-card p-6 text-left transition-colors hover:border-primary hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring/30"
               >
-                <h2 className="text-base font-semibold text-text-primary">
+                <span className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+                  <UserPlusIcon className="size-5" />
+                </span>
+                <h2 className="mt-4 text-base font-semibold">
                   Join an organization
                 </h2>
-                <p className="mt-2 text-sm text-text-muted">
+                <p className="mt-2 text-sm text-muted-foreground">
                   Have an invite code? Paste it on the next step.
                 </p>
               </button>
@@ -236,25 +274,31 @@ export default function OnboardingPage() {
                 maxLength={ORG_NAME_LIMIT}
                 autoFocus
               />
-              <div className="space-y-1 text-xs text-text-muted">
+              <div className="space-y-1 text-xs text-muted-foreground">
                 <p>
-                  Workspace URL preview: <span className="font-medium">{getOrganizationSlugPreview(organizationName)}</span>
+                  Workspace URL preview:{' '}
+                  <span className="font-medium text-foreground">
+                    {getOrganizationSlugPreview(organizationName)}
+                  </span>
                 </p>
-                <p>{organizationName.trim().length}/{ORG_NAME_LIMIT} characters</p>
+                <p>
+                  {organizationName.trim().length}/{ORG_NAME_LIMIT} characters
+                </p>
               </div>
 
               <div className="flex gap-3">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  className="flex-1"
                   onClick={goToChoice}
                   disabled={loading}
-                  className="inline-flex flex-1 items-center justify-center rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-brand-tint/40"
                 >
                   Back
-                </button>
-                <button type="submit" className="btn-primary flex-1" disabled={loading}>
-                  {loading ? 'Creating...' : 'Create organization'}
-                </button>
+                </Button>
+                <Button type="submit" className="flex-1" disabled={loading}>
+                  {loading ? 'Creating…' : 'Create organization'}
+                </Button>
               </div>
             </form>
           ) : null}
@@ -274,38 +318,54 @@ export default function OnboardingPage() {
               />
 
               <div className="flex gap-3">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  className="flex-1"
                   onClick={goToChoice}
                   disabled={loading}
-                  className="inline-flex flex-1 items-center justify-center rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-brand-tint/40"
                 >
                   Back
-                </button>
-                <button type="submit" className="btn-primary flex-1" disabled={loading}>
-                  {loading ? 'Joining...' : 'Join organization'}
-                </button>
+                </Button>
+                <Button type="submit" className="flex-1" disabled={loading}>
+                  {loading ? 'Joining…' : 'Join organization'}
+                </Button>
               </div>
             </form>
           ) : null}
 
           {step === 'invite-confirm' ? (
-            <div className="space-y-6">
-              <div className="rounded-xl border border-brand-primary bg-brand-tint p-6">
-                <p className="text-sm text-text-muted">You&apos;ve been invited to join</p>
-                <h2 className="mt-1 text-xl font-semibold text-text-primary">
-                  {inviteOrgName}
-                </h2>
+            <div className="space-y-4">
+              <div className="rounded-xl border border-primary/40 bg-accent p-6">
+                <p className="text-sm text-muted-foreground">
+                  You&apos;ve been invited to join
+                </p>
+                <h2 className="mt-1 text-xl font-semibold">{inviteOrgName}</h2>
+                {inviteEmail ? (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Invitation for {inviteEmail}
+                  </p>
+                ) : null}
               </div>
 
-              <button
+              <Button
                 type="button"
+                className="w-full"
                 onClick={() => handleJoinOrganization(inviteCode)}
-                className="btn-primary"
                 disabled={loading}
               >
-                {loading ? 'Joining...' : 'Accept and join'}
-              </button>
+                {loading ? 'Joining…' : 'Accept and join'}
+                <ArrowRightIcon />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={switchAccount}
+                disabled={loading}
+              >
+                Not your email? Sign in with another account
+              </Button>
             </div>
           ) : null}
         </div>
