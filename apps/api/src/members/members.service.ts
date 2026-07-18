@@ -200,6 +200,7 @@ export class MembersService {
       organizationName: organization.name,
       inviterName: inviter?.name ?? 'A team admin',
       inviteUrl: `${this.webUrl()}/onboarding?invite=${invite.token}`,
+      idempotencyKey: `team-invite:${invite.id}`,
     });
 
     return {
@@ -550,6 +551,67 @@ export class MembersService {
           estimatedCostCents: usage?.estimatedCostCents ?? 0,
         };
       }),
+    };
+  }
+
+  async getMyUsage(organizationId: string, userId: string) {
+    const spendPeriodStartedAt =
+      await this.resetStaleSpendPeriods(organizationId);
+
+    const [aggregate, membership, organization] = await Promise.all([
+      this.prisma.usageLog.aggregate({
+        where: {
+          organizationId,
+          userId,
+          createdAt: { gte: spendPeriodStartedAt },
+        },
+        _sum: {
+          promptTokens: true,
+          completionTokens: true,
+          estimatedCostCents: true,
+        },
+      }),
+      this.prisma.membership.findUnique({
+        where: { userId_organizationId: { userId, organizationId } },
+        select: {
+          spendLimitCents: true,
+          spendUsedCents: true,
+          tokenLimit: true,
+          tokensUsed: true,
+          suspended: true,
+        },
+      }),
+      this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: {
+          monthlySpendLimitCents: true,
+          monthlySpendUsedCents: true,
+          monthlyTokenLimit: true,
+          monthlyTokensUsed: true,
+        },
+      }),
+    ]);
+
+    if (!membership || membership.suspended) {
+      throw new ForbiddenException(
+        'You do not have active access to this organization',
+      );
+    }
+
+    return {
+      spendPeriodStartedAt,
+      usage: {
+        promptTokens: aggregate._sum.promptTokens ?? 0,
+        completionTokens: aggregate._sum.completionTokens ?? 0,
+        estimatedCostCents: aggregate._sum.estimatedCostCents ?? 0,
+        tokensUsed: membership.tokensUsed,
+        spendUsedCents: membership.spendUsedCents,
+      },
+      limits: {
+        spendLimitCents: membership.spendLimitCents,
+        tokenLimit: membership.tokenLimit,
+      },
+      organizationLimits: organization,
     };
   }
 

@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   HttpCode,
+  HttpStatus,
   Param,
   Post,
   Res,
@@ -21,7 +22,7 @@ import { ActiveOrg } from '../common/decorators/active-org.decorator';
 import { CreateTextFileDto } from './dto/files.dto';
 import { FilesService } from './files.service';
 
-type UploadedTextFile = {
+type UploadedFilePayload = {
   originalname: string;
   mimetype: string;
   size: number;
@@ -39,19 +40,21 @@ export class FilesController {
   }
 
   @Post('upload')
+  @HttpCode(HttpStatus.ACCEPTED)
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: 10_000_000 } }),
   )
   upload(
     @ActiveOrg() organizationId: string,
     @CurrentUser() user: AuthUser,
-    @UploadedFile() file?: UploadedTextFile,
+    @UploadedFile() file?: UploadedFilePayload,
   ) {
     if (!file) throw new BadRequestException('Choose a file to upload');
     return this.filesService.createUpload(organizationId, user.id, file);
   }
 
   @Post('text')
+  @HttpCode(HttpStatus.ACCEPTED)
   createText(
     @ActiveOrg() organizationId: string,
     @CurrentUser() user: AuthUser,
@@ -65,6 +68,11 @@ export class FilesController {
     );
   }
 
+  @Get(':id')
+  detail(@ActiveOrg() organizationId: string, @Param('id') fileId: string) {
+    return this.filesService.getDetail(organizationId, fileId);
+  }
+
   @Get(':id/download')
   async download(
     @ActiveOrg() organizationId: string,
@@ -75,7 +83,7 @@ export class FilesController {
       organizationId,
       fileId,
     );
-    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader('Content-Type', file.detectedMimeType ?? file.mimeType);
     res.setHeader(
       'Content-Disposition',
       `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,

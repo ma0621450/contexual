@@ -1,16 +1,19 @@
 'use client';
 
-import { useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { verifyEmailSchema } from '@/lib/validations/auth';
 import { DEV_OTP_HINT } from '@/lib/auth/dev-hint';
 import { apiFetch } from '@/lib/api/client';
 import { AuthError, AuthLayout } from '@/components/auth/AuthLayout';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { getSafeInternalReturnPath } from '@/lib/auth/return-path';
 
-export default function VerifyEmailPage() {
+function VerifyEmailForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnPath = getSafeInternalReturnPath(searchParams.get('from'));
   const [digits, setDigits] = useState(['', '', '', '']);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -71,7 +74,7 @@ export default function VerifyEmailPage() {
       return;
     }
 
-    router.push(result.data.redirectTo ?? '/onboarding');
+    router.push(returnPath ?? result.data.redirectTo ?? '/onboarding');
     router.refresh();
   }
 
@@ -149,5 +152,13 @@ export default function VerifyEmailPage() {
         </Button>
       </form>
     </AuthLayout>
+  );
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <Suspense>
+      <VerifyEmailForm />
+    </Suspense>
   );
 }

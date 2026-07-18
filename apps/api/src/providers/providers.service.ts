@@ -8,8 +8,8 @@ import { AiProvider } from '@contexual/database';
 import { AuditService } from '../audit/audit.service';
 import {
   getDefaultModel,
-  getModelsForProvider,
   isModelForProvider,
+  MODEL_CATALOG,
 } from '../chat/model-catalog';
 import { EncryptionService } from '../common/crypto/encryption.service';
 import { PrismaService } from '../database/prisma.service';
@@ -150,10 +150,13 @@ export class ProvidersService {
     };
   }
 
-  getAvailableModels(provider: AiProvider) {
-    return getModelsForProvider(provider).map(({ id, label }) => ({
+  getAvailableModels() {
+    return MODEL_CATALOG.map(({ id, provider, label, contextWindow }) => ({
       id,
+      provider,
       label,
+      contextWindow,
+      isDefault: id === getDefaultModel(provider),
     }));
   }
 

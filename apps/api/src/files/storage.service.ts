@@ -3,6 +3,7 @@ import { dirname, join } from 'path';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
@@ -38,6 +39,12 @@ export class StorageService {
       : null;
   }
 
+  async checkReady(): Promise<void> {
+    if (this.s3 && this.bucket) return;
+    await fs.mkdir(this.localRoot, { recursive: true });
+    await fs.access(this.localRoot);
+  }
+
   async put(key: string, body: Buffer, contentType: string) {
     if (this.s3 && this.bucket) {
       await this.s3.send(
@@ -54,6 +61,49 @@ export class StorageService {
     const path = join(this.localRoot, key);
     await fs.mkdir(dirname(path), { recursive: true });
     await fs.writeFile(path, body);
+  }
+
+  async putQuarantine(
+    organizationId: string,
+    objectId: string,
+    body: Buffer,
+    contentType: string,
+  ): Promise<string> {
+    const key = `quarantine/${organizationId}/${objectId}`;
+    await this.put(key, body, contentType);
+    return key;
+  }
+
+  async promote(
+    sourceKey: string,
+    organizationId: string,
+    objectId: string,
+    contentType: string,
+  ): Promise<string> {
+    const destinationKey = `clean/${organizationId}/${objectId}`;
+    if (sourceKey === destinationKey) return destinationKey;
+
+    if (this.s3 && this.bucket) {
+      await this.s3.send(
+        new CopyObjectCommand({
+          Bucket: this.bucket,
+          CopySource: encodeURIComponent(`${this.bucket}/${sourceKey}`).replace(
+            /%2F/g,
+            '/',
+          ),
+          Key: destinationKey,
+          ContentType: contentType,
+          MetadataDirective: 'REPLACE',
+        }),
+      );
+      return destinationKey;
+    }
+
+    const sourcePath = join(this.localRoot, sourceKey);
+    const destinationPath = join(this.localRoot, destinationKey);
+    await fs.mkdir(dirname(destinationPath), { recursive: true });
+    await fs.copyFile(sourcePath, destinationPath);
+    return destinationKey;
   }
 
   async get(key: string): Promise<Buffer> {

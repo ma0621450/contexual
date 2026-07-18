@@ -15,6 +15,9 @@ COPY --from=build /app /app
 EXPOSE 3001
 CMD ["npm", "run", "start:prod", "--workspace=@repo/api"]
 
+FROM api AS worker
+CMD ["npm", "run", "worker:prod", "--workspace=@repo/api"]
+
 FROM node:20-alpine AS web
 WORKDIR /app
 ENV NODE_ENV=production

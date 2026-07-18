@@ -32,7 +32,11 @@ export function hashOtp(otp: string): string {
 }
 
 export function isDevOtpAllowed(otp: string, mailConfigured: boolean): boolean {
-  return !mailConfigured && otp === DEV_STATIC_OTP;
+  return (
+    process.env.NODE_ENV !== 'production' &&
+    !mailConfigured &&
+    otp === DEV_STATIC_OTP
+  );
 }
 
 export function generatePasswordResetToken(): string {

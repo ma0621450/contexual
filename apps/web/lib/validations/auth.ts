@@ -46,6 +46,28 @@ export const resetPasswordSchema = z.object({
     .max(128),
 });
 
+export const updateProfileSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(100),
+});
+
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Current password is required'),
+    newPassword: z
+      .string()
+      .min(8, 'New password must be at least 8 characters')
+      .max(128),
+    confirmPassword: z.string().min(1, 'Confirm your new password'),
+  })
+  .refine((value) => value.newPassword === value.confirmPassword, {
+    message: 'New passwords do not match',
+    path: ['confirmPassword'],
+  })
+  .refine((value) => value.newPassword !== value.currentPassword, {
+    message: 'New password must be different from current password',
+    path: ['newPassword'],
+  });
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;

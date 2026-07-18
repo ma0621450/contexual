@@ -3,7 +3,11 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api/client';
-import type { ProviderStatus } from '@/lib/api/server';
+import type {
+  AiProviderId,
+  ProviderModel,
+  ProviderStatus,
+} from '@/lib/api/server';
 import { connectProviderSchema } from '@/lib/validations/providers';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,7 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-const PROVIDER_LABELS: Record<ProviderId, string> = {
+const PROVIDER_LABELS: Record<AiProviderId, string> = {
   OPENAI: 'OpenAI',
   ANTHROPIC: 'Anthropic',
   GOOGLE: 'Google Gemini',
@@ -28,35 +32,18 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
 type ProvidersClientProps = {
   isAdmin: boolean;
   status: ProviderStatus | null;
+  models: ProviderModel[];
 };
 
-type ProviderId = 'OPENAI' | 'ANTHROPIC' | 'GOOGLE' | 'XAI';
-
-const PROVIDER_MODELS: Record<ProviderId, { id: string; label: string }[]> = {
-  OPENAI: [
-    { id: 'gpt-4o-mini', label: 'GPT-4o mini' },
-    { id: 'gpt-4o', label: 'GPT-4o' },
-    { id: 'gpt-4.1', label: 'GPT-4.1' },
-  ],
-  ANTHROPIC: [
-    { id: 'claude-3-5-haiku-latest', label: 'Claude 3.5 Haiku' },
-    { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
-  ],
-  GOOGLE: [
-    { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
-    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-  ],
-  XAI: [
-    { id: 'grok-3-mini', label: 'Grok 3 mini' },
-    { id: 'grok-3', label: 'Grok 3' },
-  ],
-};
-
-export function ProvidersClient({ isAdmin, status }: ProvidersClientProps) {
+export function ProvidersClient({
+  isAdmin,
+  status,
+  models,
+}: ProvidersClientProps) {
   const router = useRouter();
 
   const [apiKey, setApiKey] = useState('');
-  const [provider, setProvider] = useState<ProviderId>('OPENAI');
+  const [provider, setProvider] = useState<AiProviderId>('OPENAI');
   const [defaultModel, setDefaultModel] = useState('');
   const [fieldError, setFieldError] = useState('');
   const [formError, setFormError] = useState('');
@@ -64,6 +51,9 @@ export function ProvidersClient({ isAdmin, status }: ProvidersClientProps) {
   const [pending, setPending] = useState<'connect' | 'disconnect' | null>(null);
 
   const connected = status?.connected ?? false;
+  const providerModels = models.filter((model) => model.provider === provider);
+  const recommendedModel =
+    providerModels.find((model) => model.isDefault) ?? providerModels[0];
 
   async function handleConnect(event: React.FormEvent) {
     event.preventDefault();
@@ -159,8 +149,8 @@ export function ProvidersClient({ isAdmin, status }: ProvidersClientProps) {
             <div>
               <h3 className="font-semibold">
                 {connected
-                  ? PROVIDER_LABELS[status?.provider as ProviderId] ??
-                    status?.provider
+                  ? (PROVIDER_LABELS[status?.provider as AiProviderId] ??
+                    status?.provider)
                   : 'AI provider'}
               </h3>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -203,7 +193,7 @@ export function ProvidersClient({ isAdmin, status }: ProvidersClientProps) {
                 <Select
                   value={provider}
                   onValueChange={(value) => {
-                    setProvider(value as ProviderId);
+                    setProvider(value as AiProviderId);
                     setDefaultModel('');
                   }}
                 >
@@ -258,9 +248,10 @@ export function ProvidersClient({ isAdmin, status }: ProvidersClientProps) {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__default__">
-                      {PROVIDER_MODELS[provider][0]?.label} (recommended)
+                      {recommendedModel?.label ?? 'Provider default'}{' '}
+                      (recommended)
                     </SelectItem>
-                    {PROVIDER_MODELS[provider].map((model) => (
+                    {providerModels.map((model) => (
                       <SelectItem key={model.id} value={model.id}>
                         {model.label}
                       </SelectItem>

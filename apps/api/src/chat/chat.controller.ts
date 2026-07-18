@@ -7,10 +7,11 @@ import {
   HttpException,
   Param,
   Post,
+  Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthUser } from '../auth/auth.types';
@@ -64,6 +65,7 @@ export class ChatController {
     @ActiveOrg() organizationId: string,
     @CurrentUser() user: AuthUser,
     @Body() dto: SendMessageDto,
+    @Req() req: Request,
     @Res() res: Response,
   ) {
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -71,8 +73,15 @@ export class ChatController {
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
+    const abortController = new AbortController();
+    const abortUpstream = () => abortController.abort();
+    req.once('aborted', abortUpstream);
+    res.once('close', abortUpstream);
+
     const writeEvent = (payload: unknown) => {
-      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      if (!res.destroyed) {
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      }
     };
 
     try {
@@ -85,15 +94,21 @@ export class ChatController {
           model: dto.model,
           attachmentIds: dto.attachmentIds,
         },
+        abortController.signal,
       )) {
         writeEvent(event);
       }
     } catch (error) {
-      const message = this.getStreamErrorMessage(error);
-      writeEvent({ type: 'error', message });
+      if (!abortController.signal.aborted) {
+        const message = this.getStreamErrorMessage(error);
+        writeEvent({ type: 'error', message });
+      }
+    } finally {
+      req.off('aborted', abortUpstream);
+      res.off('close', abortUpstream);
     }
 
-    res.end();
+    if (!res.destroyed) res.end();
   }
 
   @Delete('conversations/:id')

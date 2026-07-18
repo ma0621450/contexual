@@ -1,14 +1,21 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
+  CheckIcon,
+  FileIcon,
+  FolderOpenIcon,
+  HardDriveIcon,
+  LoaderCircleIcon,
   MessagesSquareIcon,
   PaperclipIcon,
   PlusIcon,
+  SearchIcon,
   SendIcon,
   Trash2Icon,
   TriangleAlertIcon,
+  UploadIcon,
   XIcon,
 } from 'lucide-react';
 import { streamChat, apiFetch } from '@/lib/api/client';
@@ -16,9 +23,27 @@ import type {
   ChatMessage,
   ConversationDetail,
   ConversationSummary,
+  ProviderModel,
+  StoredFile,
 } from '@/lib/api/server';
+import { waitForFileTerminal } from '@/lib/files';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
@@ -32,33 +57,24 @@ type ChatClientProps = {
   initialConversations: ConversationSummary[];
   providerConnected: boolean;
   provider: 'OPENAI' | 'ANTHROPIC' | 'GOOGLE' | 'XAI' | null;
+  defaultModel: string | null;
+  models: ProviderModel[];
+  initialFiles: StoredFile[];
   isAdmin: boolean;
 };
 
 type ChatAttachment = {
   id: string;
   filename: string;
+  mimeType: string;
+  sizeBytes: number;
 };
 
-const CHAT_MODELS = {
-  OPENAI: [
-    ['gpt-4o-mini', 'GPT-4o mini'],
-    ['gpt-4o', 'GPT-4o'],
-    ['gpt-4.1', 'GPT-4.1'],
-  ],
-  ANTHROPIC: [
-    ['claude-3-5-haiku-latest', 'Claude 3.5 Haiku'],
-    ['claude-sonnet-4-20250514', 'Claude Sonnet 4'],
-  ],
-  GOOGLE: [
-    ['gemini-2.0-flash', 'Gemini 2.0 Flash'],
-    ['gemini-2.5-pro', 'Gemini 2.5 Pro'],
-  ],
-  XAI: [
-    ['grok-3-mini', 'Grok 3 mini'],
-    ['grok-3', 'Grok 3'],
-  ],
-} as const;
+type PendingUpload = {
+  key: string;
+  filename: string;
+  stage: 'uploading' | 'processing';
+};
 
 let tempIdCounter = 0;
 
@@ -66,6 +82,9 @@ export function ChatClient({
   initialConversations,
   providerConnected,
   provider,
+  defaultModel,
+  models,
+  initialFiles,
   isAdmin,
 }: ChatClientProps) {
   const [conversations, setConversations] =
@@ -73,12 +92,21 @@ export function ChatClient({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
-  const availableModels = provider ? CHAT_MODELS[provider] : CHAT_MODELS.OPENAI;
-  const [model, setModel] = useState<string>(
-    availableModels[0]?.[0] ?? 'gpt-4o-mini',
-  );
+  const availableModels = models.filter((item) => item.provider === provider);
+  const defaultNewChatModel =
+    availableModels.find((item) => item.id === defaultModel)?.id ??
+    availableModels.find((item) => item.isDefault)?.id ??
+    availableModels[0]?.id ??
+    '';
+  const [model, setModel] = useState<string>(defaultNewChatModel);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
+  const [libraryFiles, setLibraryFiles] = useState(initialFiles);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [librarySearch, setLibrarySearch] = useState('');
+  const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
+  const [dragActive, setDragActive] = useState(false);
   const [sending, setSending] = useState(false);
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [archivingId, setArchivingId] = useState<string | null>(null);
@@ -86,6 +114,25 @@ export function ChatClient({
   const [failedMessage, setFailedMessage] = useState('');
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploading = pendingUploads.length > 0;
+  const conversationFiles = useMemo(() => {
+    const unique = new Map<string, ChatAttachment>();
+    for (const message of messages) {
+      for (const file of message.attachments ?? []) {
+        unique.set(file.id, file);
+      }
+    }
+    return [...unique.values()];
+  }, [messages]);
+  const readyLibraryFiles = useMemo(() => {
+    const query = librarySearch.trim().toLowerCase();
+    return libraryFiles.filter(
+      (file) =>
+        file.processingStatus === 'READY' &&
+        (!query || file.filename.toLowerCase().includes(query)),
+    );
+  }, [libraryFiles, librarySearch]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -105,7 +152,7 @@ export function ChatClient({
         return;
       }
       setMessages(result.data.messages);
-      if (availableModels.some(([id]) => id === result.data.model)) {
+      if (availableModels.some((item) => item.id === result.data.model)) {
         setModel(result.data.model);
       }
     } catch {
@@ -118,8 +165,10 @@ export function ChatClient({
   function startNewChat() {
     setActiveId(null);
     setMessages([]);
+    setAttachments([]);
     setError('');
     setFailedMessage('');
+    setModel(defaultNewChatModel);
   }
 
   async function handleSend(event: React.FormEvent) {
@@ -140,7 +189,7 @@ export function ChatClient({
     let outgoingAttachments = [...attachments];
 
     if (content.length > 8000) {
-      const pastedFile = await apiFetch<ChatAttachment>('/files/text', {
+      const pastedFile = await apiFetch<StoredFile>('/files/text', {
         method: 'POST',
         body: JSON.stringify({
           filename: `pasted-text-${Date.now()}.txt`,
@@ -152,7 +201,33 @@ export function ChatClient({
         setSending(false);
         return;
       }
-      outgoingAttachments = [...outgoingAttachments, pastedFile.data];
+      const processedFile = await waitForFileTerminal(pastedFile.data);
+      if (!processedFile.ok) {
+        setError(
+          processedFile.file?.failureMessage ??
+            processedFile.error ??
+            'The pasted text could not be processed.',
+        );
+        setSending(false);
+        return;
+      }
+      if (processedFile.file.processingStatus !== 'READY') {
+        setError(
+          processedFile.file.failureMessage ??
+            'The pasted text could not be processed.',
+        );
+        setSending(false);
+        return;
+      }
+      outgoingAttachments = [
+        ...outgoingAttachments,
+        {
+          id: processedFile.file.id,
+          filename: processedFile.file.filename,
+          mimeType: processedFile.file.mimeType,
+          sizeBytes: processedFile.file.sizeBytes,
+        },
+      ];
       outgoingContent =
         'Please review and respond to the attached pasted text.';
     }
@@ -162,11 +237,7 @@ export function ChatClient({
       role: 'USER',
       content: outgoingContent,
       createdAt: new Date().toISOString(),
-      attachments: outgoingAttachments.map((file) => ({
-        ...file,
-        mimeType: 'text/plain',
-        sizeBytes: 0,
-      })),
+      attachments: outgoingAttachments,
     };
     const streamingAssistantId = `temp-assistant-${tempIdCounter++}`;
     const streamingAssistant: ChatMessage = {
@@ -185,7 +256,7 @@ export function ChatClient({
         {
           conversationId: activeId ?? undefined,
           content: outgoingContent,
-          model,
+          model: model || undefined,
           attachmentIds: outgoingAttachments.map((file) => file.id),
         },
         (event) => {
@@ -246,8 +317,7 @@ export function ChatClient({
         setAttachments(outgoingAttachments);
         setMessages((prev) =>
           prev.filter(
-            (m) =>
-              m.id !== optimisticUser.id && m.id !== streamingAssistantId,
+            (m) => m.id !== optimisticUser.id && m.id !== streamingAssistantId,
           ),
         );
         setInput(outgoingContent);
@@ -267,21 +337,118 @@ export function ChatClient({
     }
   }
 
-  async function uploadFile(file: File) {
-    setUploading(true);
+  async function uploadFiles(files: File[]) {
+    const availableSlots = Math.max(
+      0,
+      5 - attachments.length - pendingUploads.length,
+    );
+    const selected = files.slice(0, availableSlots);
+    if (selected.length === 0) {
+      setError('You can attach up to 5 files to a message.');
+      return;
+    }
+
     setError('');
-    const form = new FormData();
-    form.append('file', file);
-    const result = await apiFetch<ChatAttachment>('/files/upload', {
-      method: 'POST',
-      body: form,
-    });
+    await Promise.all(
+      selected.map(async (file) => {
+        const key = `${file.name}-${file.size}-${file.lastModified}-${tempIdCounter++}`;
+        setPendingUploads((current) => [
+          ...current,
+          { key, filename: file.name, stage: 'uploading' },
+        ]);
+
+        try {
+          const form = new FormData();
+          form.append('file', file);
+          const result = await apiFetch<StoredFile>('/files/upload', {
+            method: 'POST',
+            body: form,
+          });
+          if (!result.ok) {
+            setError(result.error);
+            return;
+          }
+
+          setLibraryFiles((current) => [
+            result.data,
+            ...current.filter((item) => item.id !== result.data.id),
+          ]);
+          setPendingUploads((current) =>
+            current.map((item) =>
+              item.key === key ? { ...item, stage: 'processing' } : item,
+            ),
+          );
+          const processed = await waitForFileTerminal(result.data);
+          if (!processed.ok) {
+            setError(
+              processed.file?.failureMessage ??
+                processed.error ??
+                'The file could not be processed.',
+            );
+            return;
+          }
+          if (processed.file.processingStatus !== 'READY') {
+            setError(
+              processed.file.failureMessage ??
+                'The file could not be processed.',
+            );
+            return;
+          }
+
+          setLibraryFiles((current) =>
+            current.map((item) =>
+              item.id === processed.file.id ? processed.file : item,
+            ),
+          );
+          setAttachments((previous) =>
+            [
+              ...previous.filter((item) => item.id !== processed.file.id),
+              {
+                id: processed.file.id,
+                filename: processed.file.filename,
+                mimeType: processed.file.mimeType,
+                sizeBytes: processed.file.sizeBytes,
+              },
+            ].slice(0, 5),
+          );
+        } finally {
+          setPendingUploads((current) =>
+            current.filter((item) => item.key !== key),
+          );
+        }
+      }),
+    );
+  }
+
+  async function openLibrary() {
+    setLibraryOpen(true);
+    setLibraryLoading(true);
+    setSelectedLibraryIds([]);
+    const result = await apiFetch<StoredFile[]>('/files');
     if (result.ok) {
-      setAttachments((previous) => [...previous, result.data].slice(0, 5));
+      setLibraryFiles(result.data);
     } else {
       setError(result.error);
     }
-    setUploading(false);
+    setLibraryLoading(false);
+  }
+
+  function addLibraryFiles() {
+    const selected = libraryFiles
+      .filter((file) => selectedLibraryIds.includes(file.id))
+      .map((file) => ({
+        id: file.id,
+        filename: file.filename,
+        mimeType: file.mimeType,
+        sizeBytes: file.sizeBytes,
+      }));
+    setAttachments((current) => {
+      const unique = new Map(current.map((file) => [file.id, file]));
+      for (const file of selected) unique.set(file.id, file);
+      return [...unique.values()].slice(0, 5);
+    });
+    setLibraryOpen(false);
+    setLibrarySearch('');
   }
 
   async function archiveConversation(id: string) {
@@ -311,7 +478,9 @@ export function ChatClient({
 
   const canSend =
     !sending &&
+    !uploading &&
     providerConnected &&
+    model.length > 0 &&
     (input.trim().length > 0 || attachments.length > 0);
 
   return (
@@ -357,7 +526,7 @@ export function ChatClient({
                   disabled={archivingId === conversation.id}
                   aria-label={`Archive ${conversation.title}`}
                   title="Archive conversation"
-                  className="rounded-md p-1.5 text-muted-foreground opacity-0 transition hover:text-destructive focus:opacity-100 group-hover:opacity-100 disabled:opacity-50"
+                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-background hover:text-destructive disabled:pointer-events-none"
                 >
                   <Trash2Icon className="size-3.5" />
                 </button>
@@ -367,7 +536,43 @@ export function ChatClient({
         </div>
       </aside>
 
-      <section className="flex flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
+      <section
+        className={cn(
+          'relative flex flex-1 flex-col overflow-hidden rounded-xl border bg-card transition-colors',
+          dragActive ? 'border-primary bg-primary/5' : 'border-border',
+        )}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          if (event.dataTransfer.types.includes('Files')) setDragActive(true);
+        }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+            setDragActive(false);
+          }
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragActive(false);
+          void uploadFiles(Array.from(event.dataTransfer.files));
+        }}
+      >
+        {dragActive ? (
+          <div className="pointer-events-none absolute inset-3 z-40 flex items-center justify-center rounded-xl border-2 border-dashed border-primary bg-background/90 backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-2 text-center">
+              <span className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                <UploadIcon className="size-6" />
+              </span>
+              <p className="font-medium">Drop files to add them to this chat</p>
+              <p className="text-sm text-muted-foreground">
+                PDF, DOCX, TXT, Markdown, CSV, or JSON
+              </p>
+            </div>
+          </div>
+        ) : null}
         {!providerConnected ? (
           <div className="flex items-center gap-2 border-b border-border bg-warning/10 px-4 py-2.5 text-sm text-warning">
             <TriangleAlertIcon className="size-4 shrink-0" />
@@ -384,6 +589,20 @@ export function ChatClient({
                 'Ask an admin to connect one'
               )}{' '}
               before chatting.
+            </span>
+          </div>
+        ) : null}
+
+        {conversationFiles.length > 0 ? (
+          <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
+            <HardDriveIcon className="size-3.5 shrink-0" />
+            <span>
+              {conversationFiles.length}{' '}
+              {conversationFiles.length === 1 ? 'file is' : 'files are'} active
+              in this conversation
+            </span>
+            <span className="truncate text-foreground">
+              {conversationFiles.map((file) => file.filename).join(', ')}
             </span>
           </div>
         ) : null}
@@ -463,24 +682,58 @@ export function ChatClient({
           </div>
         ) : null}
 
-        {attachments.length ? (
+        {attachments.length || pendingUploads.length ? (
           <div className="flex flex-wrap gap-2 border-t border-border px-4 pt-3">
             {attachments.map((file) => (
-              <button
+              <div
                 key={file.id}
-                type="button"
-                onClick={() =>
-                  setAttachments((previous) =>
-                    previous.filter((item) => item.id !== file.id),
-                  )
-                }
-                className="inline-flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-xs text-accent-foreground transition-colors hover:bg-accent/70"
-                title="Remove attachment"
+                className="group flex min-w-0 max-w-64 items-center gap-2 rounded-lg border border-border bg-muted/50 px-2.5 py-2"
               >
-                <PaperclipIcon className="size-3" />
-                {file.filename}
-                <XIcon className="size-3" />
-              </button>
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                  <FileIcon className="size-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-medium">
+                    {file.filename}
+                  </span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    {formatFileSize(file.sizeBytes)} · Ready
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAttachments((previous) =>
+                      previous.filter((item) => item.id !== file.id),
+                    )
+                  }
+                  className="rounded p-1 text-muted-foreground transition hover:bg-background hover:text-foreground"
+                  title="Remove attachment"
+                  aria-label={`Remove ${file.filename}`}
+                >
+                  <XIcon className="size-3.5" />
+                </button>
+              </div>
+            ))}
+            {pendingUploads.map((file) => (
+              <div
+                key={file.key}
+                className="flex min-w-0 max-w-64 items-center gap-2 rounded-lg border border-border bg-muted/50 px-2.5 py-2"
+              >
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                  <LoaderCircleIcon className="size-4 animate-spin" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-medium">
+                    {file.filename}
+                  </span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    {file.stage === 'uploading'
+                      ? 'Uploading…'
+                      : 'Scanning and processing…'}
+                  </span>
+                </span>
+              </div>
             ))}
           </div>
         ) : null}
@@ -496,45 +749,62 @@ export function ChatClient({
           >
             <SelectTrigger
               size="sm"
-              className="w-[9.5rem] shrink-0"
+              className="w-38 shrink-0"
               aria-label="Chat model"
             >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {availableModels.map(([id, label]) => (
-                <SelectItem key={id} value={id}>
-                  {label}
+              {availableModels.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
 
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            asChild
-            disabled={uploading || sending || attachments.length >= 5}
-            title="Attach a file"
-          >
-            <label className="cursor-pointer">
-              <PaperclipIcon
-                className={cn(uploading && 'animate-pulse')}
-              />
-              <input
-                type="file"
-                accept=".txt,.md,.csv,.json,text/plain,text/markdown,text/csv,application/json"
-                disabled={uploading || sending || attachments.length >= 5}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void uploadFile(file);
-                  event.target.value = '';
-                }}
-                className="sr-only"
-              />
-            </label>
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                disabled={
+                  sending ||
+                  attachments.length + pendingUploads.length >= 5
+                }
+                title="Add files"
+              >
+                <PaperclipIcon />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" side="top" className="w-52">
+              <DropdownMenuItem
+                onSelect={() => fileInputRef.current?.click()}
+              >
+                <UploadIcon />
+                Upload from device
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void openLibrary()}>
+                <FolderOpenIcon />
+                Choose from Files
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".txt,.md,.csv,.json,.pdf,.docx,text/plain,text/markdown,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            disabled={
+              sending || attachments.length + pendingUploads.length >= 5
+            }
+            onChange={(event) => {
+              void uploadFiles(Array.from(event.target.files ?? []));
+              event.target.value = '';
+            }}
+            className="sr-only"
+          />
 
           <Textarea
             value={input}
@@ -543,6 +813,13 @@ export function ChatClient({
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 void handleSend(event);
+              }
+            }}
+            onPaste={(event) => {
+              const files = Array.from(event.clipboardData.files);
+              if (files.length > 0) {
+                event.preventDefault();
+                void uploadFiles(files);
               }
             }}
             rows={1}
@@ -555,6 +832,145 @@ export function ChatClient({
           </Button>
         </form>
       </section>
+
+      <Dialog
+        open={libraryOpen}
+        onOpenChange={(open) => {
+          setLibraryOpen(open);
+          if (!open) {
+            setLibrarySearch('');
+            setSelectedLibraryIds([]);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Choose files from your workspace</DialogTitle>
+            <DialogDescription>
+              Reuse processed files without uploading or scanning them again.
+              Selected files remain available for follow-up questions in this
+              conversation.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="relative">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={librarySearch}
+              onChange={(event) => setLibrarySearch(event.target.value)}
+              placeholder="Search files…"
+              className="pl-9"
+            />
+          </div>
+
+          <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+            {libraryLoading ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+                <LoaderCircleIcon className="size-4 animate-spin" />
+                Loading files…
+              </div>
+            ) : readyLibraryFiles.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-12 text-center">
+                <FolderOpenIcon className="size-8 text-muted-foreground" />
+                <p className="text-sm font-medium">No ready files found</p>
+                <p className="text-xs text-muted-foreground">
+                  Upload a file here or from the Files tab first.
+                </p>
+              </div>
+            ) : (
+              readyLibraryFiles.map((file) => {
+                const selected = selectedLibraryIds.includes(file.id);
+                const alreadyAttached = attachments.some(
+                  (attachment) => attachment.id === file.id,
+                );
+                const selectionFull =
+                  attachments.length + selectedLibraryIds.length >= 5;
+                return (
+                  <button
+                    key={file.id}
+                    type="button"
+                    disabled={alreadyAttached || (!selected && selectionFull)}
+                    onClick={() =>
+                      setSelectedLibraryIds((current) =>
+                        current.includes(file.id)
+                          ? current.filter((id) => id !== file.id)
+                          : [...current, file.id],
+                      )
+                    }
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors',
+                      selected
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:bg-muted/60',
+                      (alreadyAttached || (!selected && selectionFull)) &&
+                        'cursor-not-allowed opacity-50',
+                    )}
+                  >
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                      <FileIcon className="size-5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">
+                        {file.filename}
+                      </span>
+                      <span className="block text-xs text-muted-foreground">
+                        {formatFileSize(file.sizeBytes)}
+                        {file.uploadedBy?.name
+                          ? ` · Uploaded by ${file.uploadedBy.name}`
+                          : ''}
+                      </span>
+                    </span>
+                    {alreadyAttached ? (
+                      <span className="text-xs text-muted-foreground">
+                        Attached
+                      </span>
+                    ) : (
+                      <span
+                        className={cn(
+                          'flex size-5 items-center justify-center rounded border',
+                          selected
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border',
+                        )}
+                      >
+                        {selected ? <CheckIcon className="size-3.5" /> : null}
+                      </span>
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setLibraryOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={addLibraryFiles}
+              disabled={selectedLibraryIds.length === 0}
+            >
+              Add{' '}
+              {selectedLibraryIds.length > 0
+                ? `${selectedLibraryIds.length} ${
+                    selectedLibraryIds.length === 1 ? 'file' : 'files'
+                  }`
+                : 'files'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1_000) return `${bytes} B`;
+  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(1)} KB`;
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }

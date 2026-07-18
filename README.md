@@ -1,113 +1,139 @@
 # Contexual
 
-Contexual is a team AI workspace built as an npm/Turborepo monorepo:
+Contexual is a team AI workspace in an npm/Turborepo monorepo:
 
 - `apps/web` — Next.js web client (port 3000)
 - `apps/api` — NestJS API (port 3001)
-- `packages/database` — Prisma schema and PostgreSQL client
+- `packages/database` — Prisma schema, migrations, and PostgreSQL client
+- `file-worker` — separate asynchronous malware-scan and extraction process
 
-## Requirements
+## Implemented behavior
 
-- Node.js 20 or newer
-- npm 10 or newer
-- PostgreSQL
+- OpenAI, Anthropic, Google Gemini, and xAI chat streams provider events to the
+  browser as they arrive. The server-side `MODEL_CATALOG` is authoritative for
+  provider/model pairing, pricing estimates, context limits, and defaults.
+- Members can view their own usage and limits; administrators can view
+  organization/member usage and manage limits. Account settings support profile
+  updates and password changes. A password change revokes every session and
+  returns the user to login.
+- Suspended memberships cannot use workspace features or be selected as the
+  active organization. A suspended user can switch to another active workspace
+  or create one.
+- The file library accepts content-sniffed TXT, Markdown, CSV, JSON, PDF, and
+  DOCX files. Uploads reserve plan storage/count quota and enter quarantine.
+  The worker scans with ClamAV, fails closed when scanning is unavailable,
+  extracts text (including PDF/DOCX), promotes clean objects, and records
+  `PENDING_SCAN`, `SCANNING`, `EXTRACTING`, `READY`, `QUARANTINED`, or `FAILED`.
+  Only `READY` files can be downloaded or attached to chat.
+- `/api/health` and `/api/health/live` are liveness endpoints.
+  `/api/health/ready` verifies PostgreSQL, ClamAV, and storage.
+- Transactional email is persisted in a PostgreSQL outbox and delivered by the
+  worker process's retrying outbox processor.
 
-## Local setup
+## Local development
 
-1. Install dependencies:
+Requirements: Node.js 20.16+, npm 10+, and PostgreSQL. ClamAV is also required
+to complete file processing with the secure default.
 
-   ```bash
-   npm install
-   ```
-
-2. Copy `apps/api/.env.example` to `apps/api/.env`,
-   `apps/web/.env.example` to `apps/web/.env`, and
-   `packages/database/.env.example` to `packages/database/.env`.
-
-3. Set `JWT_SECRET` to the same strong value in both files. The web proxy
-   verifies access tokens created by the API, so different values will cause
-   authenticated users to be redirected to login.
-
-4. Set `DATABASE_URL` and apply the database migrations:
+1. Run `npm install`.
+2. Copy each example to its untracked counterpart:
+   - `apps/api/.env.example` → `apps/api/.env`
+   - `apps/web/.env.example` → `apps/web/.env`
+   - `packages/database/.env.example` → `packages/database/.env`
+3. Keep `JWT_SECRET` identical in API and web configuration, and keep
+   `DATABASE_URL` aligned between API and database configuration.
+4. Run:
 
    ```bash
    npm run db:generate
    npm run db:migrate
+   npm run dev
    ```
 
-   The API and database package use separate environment files. Keep
-   `DATABASE_URL` aligned in both.
-
-5. Start both applications:
+5. In another terminal, start the file and email-outbox worker:
 
    ```bash
-   npm run dev
+   npm run worker:dev --workspace @repo/api
    ```
 
 Open `http://localhost:3000`.
 
-## Required environment variables
+`npm run dev` is intentionally bare development: it starts the API, web app,
+and database TypeScript watcher, but not PostgreSQL, ClamAV, or the worker.
+Without ClamAV the API can serve normal requests, but readiness fails and file
+jobs cannot become `READY`. For a local-only insecure bypass, explicitly set
+`FILE_SCANNING_REQUIRED=false`; production rejects this setting.
 
-### API (`apps/api/.env`)
+## Docker Compose
 
-- `DATABASE_URL` — PostgreSQL connection string.
-- `JWT_SECRET` — access-token signing secret; must exactly match the web value.
-- `ACCESS_TOKEN_EXPIRY` — access-token and cookie lifetime, such as `15m`,
-  `1h`, or `1d`.
-- `REFRESH_TOKEN_EXPIRY_DAYS` — refresh-token lifetime in days.
-- `PORT` — API port; defaults to `3001`.
-- `WEB_URL` — public web origin used for links and redirects.
-- `ENCRYPTION_KEY` — 32-byte (64-character hexadecimal) AES key used to
-  encrypt provider API keys. Generate one with:
+After creating `apps/api/.env` and `apps/web/.env`, run:
 
-  ```bash
-  node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-  ```
+```bash
+docker compose up --build
+```
 
-### Web (`apps/web/.env`)
+Compose starts PostgreSQL and ClamAV, runs committed migrations once, then
+starts the API, dedicated file worker, and web app. PostgreSQL and ClamAV data
+use named volumes. The example Compose topology is for local integration: its
+database credentials and local container storage are not production defaults.
 
-- `JWT_SECRET` — must exactly match the API value.
-- `ACCESS_TOKEN_EXPIRY` — should match the API setting.
-- `INTERNAL_API_URL` — server-side API origin, normally
-  `http://localhost:3001`.
+## Configuration and external services
 
-`NEXT_PUBLIC_API_URL` is optional. Leave it unset when using the built-in
-same-origin `/api` rewrite.
+The example files contain safe placeholders only. In production the API
+validates the following at startup:
 
-## Optional integrations
+- PostgreSQL `DATABASE_URL`
+- a strong non-default `JWT_SECRET` (also supplied to the web app)
+- a non-default 64-hex-character `ENCRYPTION_KEY`
+- public HTTPS `WEB_URL`
+- `RESEND_API_KEY` and `EMAIL_FROM`
+- durable `S3_BUCKET` and `S3_REGION` (plus endpoint/credentials when needed)
+- `FILE_SCANNING_REQUIRED=true` and a non-loopback `CLAMAV_HOST`
 
-Stripe billing is enabled when `STRIPE_SECRET_KEY` is present. Configure
-`STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, and
-`STRIPE_PRICE_BUSINESS` for paid plans.
+Stripe remains optional; paid billing requires the secret key, webhook secret,
+and recurring Price IDs. AI credentials are organization-owned and connected
+from the Providers page. Production file storage requires S3/R2-compatible
+credentials or workload identity. Resend requires a verified sender.
 
-Email delivery through Resend is enabled when `RESEND_API_KEY` and
-`EMAIL_FROM` are set. Without them, development emails and verification codes
-are logged by the API.
+Keep secrets in a deployment secret manager, never in Git or image layers.
+Rotate JWT secrets with a planned global re-login. Rotating `ENCRYPTION_KEY`
+requires re-encrypting stored provider credentials (or reconnecting providers);
+do not replace it without a migration. Rotate compromised provider, Stripe,
+Resend, database, and object-storage credentials at their issuers and update the
+secret manager.
 
-File uploads use S3-compatible object storage when `S3_BUCKET` is set. Configure
-`S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY` for
-AWS S3, Cloudflare R2, or MinIO. Without a bucket, development uploads are
-written beneath `LOCAL_UPLOAD_DIR`; do not use local storage in a
-multi-instance production deployment.
+Production database access must use a dedicated non-superuser application role.
+RLS-protected tenant operations set transaction-local `app.organization_id`;
+PostgreSQL superusers and roles with `BYPASSRLS` defeat that boundary. Apply
+migrations with a separate privileged migration identity, then grant the app
+role only the required schema/table/sequence permissions.
 
-The initial upload policy accepts TXT, Markdown, CSV, and JSON files. Size
-limits depend on the plan (1–10 MB). Binary content is rejected and files are
-always scoped to the active organization. Add malware scanning before
-expanding the production allowlist to executable, archive, Office, or PDF
-formats.
+## Verification commands
 
-Never commit real environment files or production secrets. The repository
-ignores `.env` files; use your deployment platform's secret manager in
-production.
+```bash
+npm run db:generate
+npm run db:validate
+npm run db:status
+npm run lint
+npm test --workspace @repo/api -- --runInBand
+npm test --workspace @repo/web
+npm run test:e2e --workspace @repo/api -- --runInBand
+npm run build
+npm run test:e2e --workspace @repo/web -- --list
+docker compose config --quiet
+git diff --check
+```
 
-## Commands
+API e2e requires migrated PostgreSQL and is intended to run as a non-superuser
+application role. Browser execution additionally requires built/running API,
+worker, and web services; `--list` only discovers Playwright tests.
 
-- `npm run dev` — run all applications in development mode.
-- `npm run build` — build all workspaces.
-- `npm run lint` — lint all workspaces.
-- `npm run test` — run tests.
-- `npm run db:generate` — regenerate the Prisma client.
-- `npm run db:migrate` — create/apply a development migration.
-- `npm run db:deploy` — apply committed migrations in CI/production.
+GitHub Actions currently runs:
 
-See `HANDOFF.md` for deployment, external-service, and upload-security notes.
+- lint, API/web unit tests, and all builds;
+- migration deployment/status and API e2e against PostgreSQL as a non-superuser
+  app role, with ClamAV;
+- Compose validation and API/web Docker build smoke tests;
+- Playwright smoke only when repository variable `RUN_PLAYWRIGHT` is `true`.
+
+See `HANDOFF.md` for architecture, deployment boundaries, and remaining setup.

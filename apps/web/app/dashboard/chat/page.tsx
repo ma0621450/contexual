@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation';
 import {
   getConversations,
   getCurrentUser,
+  getFiles,
+  getProviderModels,
   getProviderStatus,
 } from '@/lib/api/server';
 import { ChatClient } from './ChatClient';
@@ -21,9 +23,11 @@ export default async function ChatPage() {
     redirect('/onboarding');
   }
 
-  const [conversations, providerStatus] = await Promise.all([
+  const [conversations, providerStatus, models, files] = await Promise.all([
     getConversations(),
     getProviderStatus(),
+    getProviderModels(),
+    getFiles(),
   ]);
 
   return (
@@ -31,6 +35,9 @@ export default async function ChatPage() {
       initialConversations={conversations}
       providerConnected={providerStatus?.connected ?? false}
       provider={providerStatus?.provider ?? null}
+      defaultModel={providerStatus?.defaultModel ?? null}
+      models={models}
+      initialFiles={files}
       isAdmin={user.role === 'ADMIN'}
     />
   );

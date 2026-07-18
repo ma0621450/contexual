@@ -27,6 +27,12 @@ export class ProvidersController {
     return this.providersService.getStatus(organizationId);
   }
 
+  @Get('models')
+  @Roles(MembershipRole.ADMIN, MembershipRole.MEMBER)
+  getModels() {
+    return this.providersService.getAvailableModels();
+  }
+
   @Post()
   @Roles(MembershipRole.ADMIN)
   @HttpCode(200)

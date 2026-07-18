@@ -1,9 +1,5 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import {
-  createPrismaAdapter,
-  Prisma,
-  PrismaClient,
-} from '@contexual/database';
+import { createPrismaAdapter, Prisma, PrismaClient } from '@contexual/database';
 
 @Injectable()
 export class PrismaService

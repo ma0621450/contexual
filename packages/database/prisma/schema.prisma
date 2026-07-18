@@ -49,6 +49,31 @@ enum UsageReservationStatus {
   RELEASED
 }
 
+enum FileProcessingStatus {
+  PENDING_SCAN
+  SCANNING
+  EXTRACTING
+  READY
+  QUARANTINED
+  FAILED
+}
+
+enum FileProcessingJobStatus {
+  PENDING
+  PROCESSING
+  RETRY
+  COMPLETED
+  FAILED
+}
+
+enum EmailOutboxStatus {
+  PENDING
+  PROCESSING
+  RETRY
+  SENT
+  FAILED
+}
+
 model User {
   id              String   @id @default(cuid())
   email           String   @unique
@@ -116,6 +141,10 @@ model Organization {
   stripeEvents  StripeEvent[]
   usageLogs     UsageLog[]
   usageReservations UsageReservation[]
+  fileProcessingJobs FileProcessingJob[]
+
+  storageBytesUsed BigInt @default(0)
+  storedFileCount  Int    @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -232,23 +261,61 @@ model Message {
 }
 
 model StoredFile {
-  id             String @id @default(cuid())
-  organizationId String
-  uploadedById   String
-  filename       String
-  mimeType       String
-  sizeBytes      Int
-  storageKey     String @unique
-  extractedText  String? @db.Text
+  id                  String               @id @default(cuid())
+  organizationId      String
+  uploadedById        String
+  filename            String
+  mimeType            String
+  detectedMimeType    String?
+  sizeBytes           Int
+  storageKey          String               @unique
+  sha256              String?
+  processingStatus    FileProcessingStatus @default(PENDING_SCAN)
+  scanBypassed        Boolean              @default(false)
+  scanStartedAt       DateTime?
+  scannedAt           DateTime?
+  extractionStartedAt DateTime?
+  extractedAt         DateTime?
+  failureCode         String?
+  failureMessage      String?
+  extractedText       String?              @db.Text
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   uploadedBy   User         @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
   attachments MessageAttachment[]
+  processingJob FileProcessingJob?
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([organizationId, createdAt])
   @@index([organizationId, uploadedById])
+  @@index([organizationId, processingStatus])
+}
+
+model FileProcessingJob {
+  id               String                  @id @default(cuid())
+  fileId           String                  @unique
+  organizationId   String
+  status           FileProcessingJobStatus @default(PENDING)
+  attempts         Int                     @default(0)
+  maxAttempts      Int                     @default(5)
+  runAfter         DateTime                @default(now())
+  lockedAt         DateTime?
+  lockedBy         String?
+  lastErrorCode    String?
+  lastErrorMessage String?
+  completedAt      DateTime?
+
+  file         StoredFile   @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, runAfter])
+  @@index([organizationId, status, runAfter])
+  @@index([lockedAt])
 }
 
 model MessageAttachment {
@@ -340,4 +407,27 @@ model StripeEvent {
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
   @@index([type])
+}
+
+model EmailOutbox {
+  id             String            @id @default(cuid())
+  idempotencyKey String            @unique
+  to             String
+  subject        String
+  html           String            @db.Text
+  text           String            @db.Text
+  status         EmailOutboxStatus @default(PENDING)
+  attempts       Int               @default(0)
+  maxAttempts    Int               @default(5)
+  runAfter       DateTime          @default(now())
+  lockedAt       DateTime?
+  lockedBy       String?
+  providerId     String?
+  lastError      String?
+  sentAt         DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([status, runAfter])
+  @@index([lockedAt])
 }

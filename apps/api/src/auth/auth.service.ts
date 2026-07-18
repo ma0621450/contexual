@@ -10,6 +10,7 @@ import {
   generatePasswordResetToken,
   hashOtp,
   hashPassword,
+  hashPasswordResetToken,
   isDevOtpAllowed,
   verifyPassword,
 } from './auth.utils';
@@ -55,7 +56,12 @@ export class AuthService {
 
     const otp = generateOtp();
     await this.usersService.setEmailVerificationOtp(user.id, otp);
-    await this.mailService.sendVerificationOtp(user.email, user.name, otp);
+    await this.mailService.sendVerificationOtp(
+      user.email,
+      user.name,
+      otp,
+      `verification:${user.id}:${hashOtp(otp)}`,
+    );
 
     await this.sessionsService.createSession(user, res);
 
@@ -121,7 +127,12 @@ export class AuthService {
 
     const otp = generateOtp();
     await this.usersService.setEmailVerificationOtp(user.id, otp);
-    await this.mailService.sendVerificationOtp(user.email, user.name, otp);
+    await this.mailService.sendVerificationOtp(
+      user.email,
+      user.name,
+      otp,
+      `verification:${user.id}:${hashOtp(otp)}`,
+    );
     return { ok: true };
   }
 
@@ -135,6 +146,7 @@ export class AuthService {
         to: user.email,
         name: user.name,
         resetUrl: `${this.webUrl()}/reset-password?token=${encodeURIComponent(token)}`,
+        idempotencyKey: `password-reset:${user.id}:${hashPasswordResetToken(token)}`,
       });
     }
 
@@ -158,6 +170,43 @@ export class AuthService {
     await this.sessionsService.revokeAllUserRefreshTokens(user.id);
 
     return { ok: true };
+  }
+
+  async updateProfile(user: AuthUser, name: string) {
+    const updatedUser = await this.usersService.updateName(
+      user.id,
+      name.trim(),
+    );
+    return this.usersService.toProfile(updatedUser);
+  }
+
+  async changePassword(
+    user: AuthUser,
+    currentPassword: string,
+    newPassword: string,
+    res: Response,
+  ) {
+    const passwordHash = await this.usersService.findPasswordHash(user.id);
+    if (
+      !passwordHash ||
+      !(await verifyPassword(currentPassword, passwordHash))
+    ) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+    if (await verifyPassword(newPassword, passwordHash)) {
+      throw new BadRequestException(
+        'New password must be different from current password',
+      );
+    }
+
+    await this.usersService.updatePassword(
+      user.id,
+      await hashPassword(newPassword),
+    );
+    await this.sessionsService.revokeAllUserRefreshTokens(user.id);
+    this.authCookieService.clearAuthCookies(res);
+
+    return { ok: true, requiresLogin: true };
   }
 
   async refresh(refreshToken: string | undefined, res: Response) {

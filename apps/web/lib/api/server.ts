@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 
 const INTERNAL_API_URL =
   process.env.INTERNAL_API_URL ?? 'http://localhost:3001';
+const API_TIMEOUT_MS = Number(process.env.API_SERVER_TIMEOUT_MS ?? 3000);
 
 export type OrganizationRole = 'ADMIN' | 'MEMBER';
 
@@ -67,6 +68,14 @@ export type ProviderStatus = {
   defaultModel: string | null;
   connectedAt: string | null;
   connectedByName: string | null;
+};
+
+export type ProviderModel = {
+  id: string;
+  provider: AiProviderId;
+  label: string;
+  contextWindow: number;
+  isDefault: boolean;
 };
 
 export type ConversationSummary = {
@@ -141,6 +150,27 @@ export type UsageSummary = {
   members: UsageMember[];
 };
 
+export type MyUsageSummary = {
+  spendPeriodStartedAt: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    estimatedCostCents: number;
+    tokensUsed: number;
+    spendUsedCents: number;
+  };
+  limits: {
+    spendLimitCents: number | null;
+    tokenLimit: number | null;
+  };
+  organizationLimits: {
+    monthlySpendLimitCents: number | null;
+    monthlySpendUsedCents: number;
+    monthlyTokenLimit: number | null;
+    monthlyTokensUsed: number;
+  } | null;
+};
+
 export type AuditLogEntry = {
   id: string;
   action: string;
@@ -150,6 +180,33 @@ export type AuditLogEntry = {
   createdAt: string;
 };
 
+export type FileProcessingStatus =
+  | 'PENDING_SCAN'
+  | 'SCANNING'
+  | 'EXTRACTING'
+  | 'READY'
+  | 'QUARANTINED'
+  | 'FAILED';
+
+export type StoredFile = {
+  id: string;
+  filename: string;
+  mimeType: string;
+  detectedMimeType: string | null;
+  sizeBytes: number;
+  processingStatus: FileProcessingStatus;
+  scanBypassed: boolean;
+  failureCode: string | null;
+  failureMessage: string | null;
+  uploadedById: string;
+  uploadedBy?: {
+    name: string;
+    email: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type BillingStatus = {
   stripeConfigured: boolean;
   planTier: 'FREE' | 'STARTER' | 'PRO' | 'BUSINESS';
@@ -157,6 +214,13 @@ export type BillingStatus = {
   hasBillingAccount: boolean;
   hasActiveSubscription: boolean;
 };
+
+export class ApiUnavailableError extends Error {
+  constructor(message = 'The API is temporarily unavailable.') {
+    super(message);
+    this.name = 'ApiUnavailableError';
+  }
+}
 
 async function getCookieHeader(): Promise<string | null> {
   const cookieStore = await cookies();
@@ -175,19 +239,28 @@ async function serverFetch<T>(path: string): Promise<T | null> {
     return null;
   }
 
+  let response: Response;
   try {
-    const response = await fetch(`${INTERNAL_API_URL}/api${path}`, {
+    response = await fetch(`${INTERNAL_API_URL}/api${path}`, {
       headers: { Cookie: cookieHeader },
       cache: 'no-store',
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
+  } catch {
+    throw new ApiUnavailableError();
+  }
 
-    if (!response.ok) {
-      return null;
-    }
+  if (response.status >= 500) {
+    throw new ApiUnavailableError();
+  }
+  if (!response.ok) {
+    return null;
+  }
 
+  try {
     return (await response.json()) as T;
   } catch {
-    return null;
+    throw new ApiUnavailableError('The API returned an invalid response.');
   }
 }
 
@@ -209,13 +282,21 @@ export async function getTeamOverview(): Promise<TeamOverview | null> {
 
 export async function getOrganizations(): Promise<OrganizationMembership[]> {
   return (
-    (await serverFetch<OrganizationMembership[]>('/onboarding/organizations')) ??
-    []
+    (await serverFetch<OrganizationMembership[]>(
+      '/onboarding/organizations',
+    )) ?? []
   );
 }
 
 export async function getProviderStatus(): Promise<ProviderStatus | null> {
   return serverFetch<ProviderStatus>('/organizations/providers');
+}
+
+export async function getProviderModels(): Promise<ProviderModel[]> {
+  return (
+    (await serverFetch<ProviderModel[]>('/organizations/providers/models')) ??
+    []
+  );
 }
 
 export async function getConversations(): Promise<ConversationSummary[]> {
@@ -238,10 +319,20 @@ export async function getUsage(): Promise<UsageSummary | null> {
   return serverFetch<UsageSummary>('/organizations/usage');
 }
 
+export async function getMyUsage(): Promise<MyUsageSummary | null> {
+  return serverFetch<MyUsageSummary>('/organizations/usage/me');
+}
+
 export async function getBillingStatus(): Promise<BillingStatus | null> {
   return serverFetch<BillingStatus>('/billing/status');
 }
 
 export async function getAuditLogs(): Promise<AuditLogEntry[]> {
-  return (await serverFetch<AuditLogEntry[]>('/organizations/audit-logs')) ?? [];
+  return (
+    (await serverFetch<AuditLogEntry[]>('/organizations/audit-logs')) ?? []
+  );
+}
+
+export async function getFiles(): Promise<StoredFile[]> {
+  return (await serverFetch<StoredFile[]>('/files')) ?? [];
 }

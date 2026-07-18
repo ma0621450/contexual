@@ -15,6 +15,8 @@
     "dev": "tsc -p tsconfig.json --watch",
     "lint": "tsc -p tsconfig.json --noEmit",
     "db:generate": "prisma generate",
+    "db:validate": "prisma validate",
+    "db:status": "prisma migrate status",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",

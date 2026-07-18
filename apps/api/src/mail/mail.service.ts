@@ -1,18 +1,23 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../database/prisma.service';
 
 type SendMailParams = {
   to: string;
   subject: string;
   html: string;
   text: string;
+  idempotencyKey: string;
 };
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   isConfigured(): boolean {
     return Boolean(
@@ -25,9 +30,11 @@ export class MailService {
     to: string,
     name: string,
     otp: string,
+    idempotencyKey: string,
   ): Promise<void> {
     await this.send({
       to,
+      idempotencyKey,
       subject: 'Verify your Contexual email',
       text: `Hi ${name},\n\nYour verification code is ${otp}. It expires in 15 minutes.\n`,
       html: `<p>Hi ${this.escapeHtml(name)},</p><p>Your verification code is <strong>${otp}</strong>.</p><p>It expires in 15 minutes.</p>`,
@@ -39,9 +46,11 @@ export class MailService {
     organizationName: string;
     inviterName: string;
     inviteUrl: string;
+    idempotencyKey: string;
   }): Promise<void> {
     await this.send({
       to: params.to,
+      idempotencyKey: params.idempotencyKey,
       subject: `Join ${params.organizationName} on Contexual`,
       text: `${params.inviterName} invited you to join ${params.organizationName} on Contexual.\n\nAccept the invite: ${params.inviteUrl}\n`,
       html: `<p>${this.escapeHtml(params.inviterName)} invited you to join <strong>${this.escapeHtml(params.organizationName)}</strong> on Contexual.</p><p><a href="${params.inviteUrl}">Accept invitation</a></p>`,
@@ -52,9 +61,11 @@ export class MailService {
     to: string;
     name: string;
     resetUrl: string;
+    idempotencyKey: string;
   }): Promise<void> {
     await this.send({
       to: params.to,
+      idempotencyKey: params.idempotencyKey,
       subject: 'Reset your Contexual password',
       text: `Hi ${params.name},\n\nReset your password: ${params.resetUrl}\n\nThis link expires in 1 hour.\n`,
       html: `<p>Hi ${this.escapeHtml(params.name)},</p><p><a href="${params.resetUrl}">Reset your password</a></p><p>This link expires in 1 hour.</p>`,
@@ -63,36 +74,25 @@ export class MailService {
 
   private async send(params: SendMailParams): Promise<void> {
     if (!this.isConfigured()) {
-      this.logger.log(
-        `[dev email] To: ${params.to}\nSubject: ${params.subject}\n${params.text}`,
-      );
+      if (this.config.get<string>('NODE_ENV') === 'production') {
+        throw new Error('Email delivery is not configured');
+      }
+      this.logger.log(`[dev email] To: ${params.to}; ${params.subject}`);
       return;
     }
 
-    const apiKey = this.config.getOrThrow<string>('RESEND_API_KEY');
-    const from = this.config.getOrThrow<string>('EMAIL_FROM');
-
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from,
-        to: [params.to],
+    await this.prisma.emailOutbox.upsert({
+      where: { idempotencyKey: params.idempotencyKey },
+      update: {},
+      create: {
+        idempotencyKey: params.idempotencyKey,
+        to: params.to,
         subject: params.subject,
         html: params.html,
         text: params.text,
-      }),
+        maxAttempts: Number(this.config.get<string>('EMAIL_MAX_ATTEMPTS') || 5),
+      },
     });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      this.logger.error(
-        `Failed to send email to ${params.to} (${response.status}): ${body}`,
-      );
-    }
   }
 
   private escapeHtml(value: string): string {

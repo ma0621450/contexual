@@ -3,10 +3,12 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckIcon, ChevronsUpDownIcon, PlusIcon } from 'lucide-react';
+import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api/client';
 import type { OrganizationMembership } from '@/lib/api/server';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,6 +47,7 @@ export function OrganizationSwitcher({
       router.refresh();
       return;
     }
+    toast.error(result.error);
     setSwitching(false);
   }
 
@@ -79,13 +82,15 @@ export function OrganizationSwitcher({
             <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-semibold text-muted-foreground">
               {organization.name.charAt(0).toUpperCase()}
             </span>
-            <span className="truncate">
-              {organization.name}
-              {organization.suspended ? ' (suspended)' : ''}
-            </span>
+            <span className="truncate">{organization.name}</span>
+            {organization.suspended ? (
+              <Badge variant="destructive" className="ml-auto text-[10px]">
+                Suspended
+              </Badge>
+            ) : null}
             <CheckIcon
               className={cn(
-                'ml-auto size-4',
+                organization.suspended ? 'size-4' : 'ml-auto size-4',
                 organization.id === activeOrganizationId
                   ? 'opacity-100'
                   : 'opacity-0',

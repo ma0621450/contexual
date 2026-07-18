@@ -13,12 +13,7 @@ import { inviteMemberSchema } from '@/lib/validations/team';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Select,
   SelectContent,
@@ -88,7 +83,9 @@ export function TeamClient({
 
       setEmail('');
       setRole('MEMBER');
-      setNotice('Invitation sent. The invitee will receive an email with a join link.');
+      setNotice(
+        'Invitation sent. The invitee will receive an email with a join link.',
+      );
       refresh();
     } catch {
       setFormError('Unable to create invite. Check your connection.');
@@ -195,7 +192,9 @@ export function TeamClient({
   async function leaveOrganization() {
     if (
       pendingAction ||
-      !window.confirm('Leave this organization? You may lose access immediately.')
+      !window.confirm(
+        'Leave this organization? You may lose access immediately.',
+      )
     ) {
       return;
     }
@@ -354,6 +353,9 @@ export function TeamClient({
                 </div>
 
                 <div className="flex items-center gap-3">
+                  {member.suspended ? (
+                    <Badge variant="destructive">Suspended</Badge>
+                  ) : null}
                   {isAdmin && !isSelf ? (
                     <Select
                       value={member.role}
@@ -383,9 +385,7 @@ export function TeamClient({
                         variant="ghost"
                         size="sm"
                         onClick={() => transferAdmin(member.userId)}
-                        disabled={
-                          pendingAction === `transfer-${member.userId}`
-                        }
+                        disabled={pendingAction === `transfer-${member.userId}`}
                       >
                         Transfer admin
                       </Button>

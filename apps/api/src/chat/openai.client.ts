@@ -4,6 +4,9 @@ import {
   Injectable,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { parseSseStream } from './sse-parser';
+
+const PROVIDER_TIMEOUT_MS = 120_000;
 
 export type ChatCompletionMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -40,6 +43,7 @@ export class OpenAiClient {
     messages: ChatCompletionMessage[],
     stream: boolean,
     baseUrl = 'https://api.openai.com/v1',
+    signal?: AbortSignal,
   ): Promise<Response> {
     let response: Response;
 
@@ -56,6 +60,11 @@ export class OpenAiClient {
           stream,
           ...(stream ? { stream_options: { include_usage: true } } : {}),
         }),
+        signal: AbortSignal.any(
+          [signal, AbortSignal.timeout(PROVIDER_TIMEOUT_MS)].filter(
+            (item): item is AbortSignal => Boolean(item),
+          ),
+        ),
       });
     } catch {
       throw new ServiceUnavailableException(
@@ -121,6 +130,7 @@ export class OpenAiClient {
     model: string,
     messages: ChatCompletionMessage[],
     baseUrl?: string,
+    signal?: AbortSignal,
   ): AsyncGenerator<OpenAiStreamPart> {
     const response = await this.requestCompletion(
       apiKey,
@@ -128,6 +138,7 @@ export class OpenAiClient {
       messages,
       true,
       baseUrl,
+      signal,
     );
 
     if (!response.ok) {
@@ -135,57 +146,36 @@ export class OpenAiClient {
       this.handleErrorResponse(response, body);
     }
 
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new BadGatewayException('OpenAI returned an empty stream');
+    if (!response.body) {
+      throw new BadGatewayException('AI provider returned an empty stream');
     }
 
-    const decoder = new TextDecoder();
-    let buffer = '';
+    for await (const event of parseSseStream(response.body)) {
+      if (!event.data || event.data === '[DONE]') continue;
 
-    while (true) {
-      const { done, value } = (await reader.read()) as {
-        done: boolean;
-        value?: Uint8Array;
-      };
-      if (done) {
-        break;
+      let parsed: OpenAiStreamChunk;
+      try {
+        parsed = JSON.parse(event.data) as OpenAiStreamChunk;
+      } catch {
+        continue;
+      }
+      if (parsed.error?.message || event.event === 'error') {
+        throw new BadGatewayException(
+          parsed.error?.message ?? 'AI provider stream failed',
+        );
       }
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
+      const delta = parsed.choices?.[0]?.delta?.content;
+      if (typeof delta === 'string' && delta.length > 0) {
+        yield { kind: 'delta', content: delta };
+      }
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data:')) {
-          continue;
-        }
-
-        const payload = trimmed.slice(5).trim();
-        if (!payload || payload === '[DONE]') {
-          continue;
-        }
-
-        let parsed: OpenAiStreamChunk;
-        try {
-          parsed = JSON.parse(payload) as OpenAiStreamChunk;
-        } catch {
-          continue;
-        }
-
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (typeof delta === 'string' && delta.length > 0) {
-          yield { kind: 'delta', content: delta };
-        }
-
-        if (parsed.usage) {
-          yield {
-            kind: 'usage',
-            promptTokens: parsed.usage.prompt_tokens ?? 0,
-            completionTokens: parsed.usage.completion_tokens ?? 0,
-          };
-        }
+      if (parsed.usage) {
+        yield {
+          kind: 'usage',
+          promptTokens: parsed.usage.prompt_tokens ?? 0,
+          completionTokens: parsed.usage.completion_tokens ?? 0,
+        };
       }
     }
   }

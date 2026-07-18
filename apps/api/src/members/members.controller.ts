@@ -48,6 +48,14 @@ export class MembersController {
     return this.membersService.getUsage(organizationId);
   }
 
+  @Get('usage/me')
+  getMyUsage(
+    @ActiveOrg() organizationId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.membersService.getMyUsage(organizationId, user.id);
+  }
+
   @Get('audit-logs')
   @Roles(MembershipRole.ADMIN)
   listAuditLogs(@ActiveOrg() organizationId: string) {

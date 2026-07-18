@@ -1,10 +1,13 @@
 'use client';
 
+import Link from 'next/link';
+import { SettingsIcon } from 'lucide-react';
 import { LogoutButton } from '@/components/dashboard/LogoutButton';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -47,6 +50,13 @@ export function UserMenu({ name, email, role }: UserMenuProps) {
             {role}
           </span>
         </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/dashboard/settings">
+            <SettingsIcon className="size-4" />
+            Settings
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <LogoutButton />
       </DropdownMenuContent>

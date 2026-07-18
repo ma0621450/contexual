@@ -149,6 +149,22 @@ export class UsersService {
     });
   }
 
+  async updateName(userId: string, name: string): Promise<AuthUser> {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { name },
+      include: { memberships: MEMBERSHIP_SELECT },
+    });
+  }
+
+  async findPasswordHash(userId: string): Promise<string | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { passwordHash: true },
+    });
+    return user?.passwordHash ?? null;
+  }
+
   toProfile(user: AuthUser) {
     const activeMembership = getActiveMembership(user);
 

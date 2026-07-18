@@ -1,25 +1,30 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { loginSchema } from '@/lib/validations/auth';
 import { apiFetch } from '@/lib/api/client';
 import { AuthError, AuthLayout, AuthLink } from '@/components/auth/AuthLayout';
 import { FormField } from '@/components/auth/FormField';
 import { Button } from '@/components/ui/button';
+import { getSafeInternalReturnPath } from '@/lib/auth/return-path';
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
-  const [email, setEmail] = useState('');
+  const searchParams = useSearchParams();
+  const [email, setEmail] = useState(() => searchParams.get('email') ?? '');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState('');
   const [loading, setLoading] = useState(false);
-
-  function getSafeReturnPath(): string | null {
-    const from = new URLSearchParams(window.location.search).get('from');
-    return from?.startsWith('/') && !from.startsWith('//') ? from : null;
-  }
+  const passwordChanged = searchParams.get('passwordChanged') === '1';
+  const returnPath = getSafeInternalReturnPath(searchParams.get('from'));
+  const signupParams = new URLSearchParams();
+  if (returnPath) signupParams.set('from', returnPath);
+  if (searchParams.get('email')) signupParams.set('email', email);
+  const signupHref = signupParams.size
+    ? `/signup?${signupParams.toString()}`
+    : '/signup';
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -51,7 +56,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.push(getSafeReturnPath() ?? result.data.redirectTo ?? '/dashboard');
+    router.push(returnPath ?? result.data.redirectTo ?? '/dashboard');
     router.refresh();
   }
 
@@ -61,12 +66,18 @@ export default function LoginPage() {
       subtitle="Sign in to your Contexual workspace"
       footer={
         <p>
-          Don&apos;t have an account? <AuthLink href="/signup">Sign up</AuthLink>
+          Don&apos;t have an account?{' '}
+          <AuthLink href={signupHref}>Sign up</AuthLink>
         </p>
       }
     >
       <form onSubmit={handleSubmit} className="space-y-5">
         <AuthError>{formError}</AuthError>
+        {passwordChanged ? (
+          <p className="rounded-lg border border-border bg-accent px-3 py-2 text-sm text-accent-foreground">
+            Password changed. Sign in again with your new password.
+          </p>
+        ) : null}
 
         <FormField
           label="Email"
@@ -96,5 +107,13 @@ export default function LoginPage() {
         </Button>
       </form>
     </AuthLayout>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

@@ -1,5 +1,9 @@
 import { redirect } from 'next/navigation';
-import { getCurrentUser, getProviderStatus } from '@/lib/api/server';
+import {
+  getCurrentUser,
+  getProviderModels,
+  getProviderStatus,
+} from '@/lib/api/server';
 import { ProvidersClient } from './ProvidersClient';
 
 export default async function ProvidersPage() {
@@ -17,7 +21,16 @@ export default async function ProvidersPage() {
     redirect('/onboarding');
   }
 
-  const status = await getProviderStatus();
+  const [status, models] = await Promise.all([
+    getProviderStatus(),
+    getProviderModels(),
+  ]);
 
-  return <ProvidersClient isAdmin={user.role === 'ADMIN'} status={status} />;
+  return (
+    <ProvidersClient
+      isAdmin={user.role === 'ADMIN'}
+      status={status}
+      models={models}
+    />
+  );
 }

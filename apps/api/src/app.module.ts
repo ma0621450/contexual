@@ -8,6 +8,7 @@ import { ChatModule } from './chat/chat.module';
 import { CryptoModule } from './common/crypto/crypto.module';
 import { DatabaseModule } from './database/database.module';
 import { FilesModule } from './files/files.module';
+import { HealthModule } from './health/health.module';
 import { MailModule } from './mail/mail.module';
 import { MemoriesModule } from './memories/memories.module';
 import { MembersModule } from './members/members.module';
@@ -23,6 +24,7 @@ import { ProvidersModule } from './providers/providers.module';
     AuditModule,
     DatabaseModule,
     FilesModule,
+    HealthModule,
     AuthModule,
     OnboardingModule,
     MembersModule,

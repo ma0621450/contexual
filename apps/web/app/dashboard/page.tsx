@@ -4,6 +4,7 @@ import {
   ActivityIcon,
   ArrowRightIcon,
   CreditCardIcon,
+  FilesIcon,
   type LucideIcon,
   MessagesSquareIcon,
   PlugIcon,
@@ -38,6 +39,12 @@ const quickActions: QuickAction[] = [
     title: 'Memories',
     description: 'Manage reusable context for you and your organization.',
     icon: SparklesIcon,
+  },
+  {
+    href: '/dashboard/files',
+    title: 'File library',
+    description: 'Upload and manage secure context for your conversations.',
+    icon: FilesIcon,
   },
   {
     href: '/dashboard/team',

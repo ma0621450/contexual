@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   createOrganizationSchema,
@@ -12,6 +12,11 @@ import { AuthError, AuthLayout } from '@/components/auth/AuthLayout';
 import { FormField } from '@/components/auth/FormField';
 import { StepIndicator } from '@/components/auth/StepIndicator';
 import { Button } from '@/components/ui/button';
+import type { CurrentUser } from '@/lib/api/server';
+import {
+  getInviteAuthHref,
+  getInviteReturnPath,
+} from '@/lib/auth/return-path';
 
 type OnboardingStep = 'choice' | 'create' | 'join' | 'invite-confirm';
 const ORG_NAME_LIMIT = 100;
@@ -27,10 +32,15 @@ function getOrganizationSlugPreview(name: string): string {
   return slug || 'your-workspace';
 }
 
-export default function OnboardingPage() {
+type OnboardingPageProps = {
+  currentUser: CurrentUser | null;
+};
+
+export default function OnboardingPage({ currentUser }: OnboardingPageProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const inviteToken = searchParams.get('invite') ?? '';
+  const autoAcceptRequested = searchParams.get('accept') === '1';
   const createRequested = searchParams.get('action') === 'create';
 
   const [step, setStep] = useState<OnboardingStep>(
@@ -41,12 +51,14 @@ export default function OnboardingPage() {
   );
   const [organizationName, setOrganizationName] = useState('');
   const [inviteOrgName, setInviteOrgName] = useState('');
+  const [inviteOrganizationId, setInviteOrganizationId] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteCode, setInviteCode] = useState(inviteToken);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState('');
   const [loading, setLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(Boolean(inviteToken));
+  const autoAcceptAttempted = useRef(false);
 
   useEffect(() => {
     if (!inviteToken) return;
@@ -55,6 +67,7 @@ export default function OnboardingPage() {
       setPreviewLoading(true);
       try {
         const result = await apiFetch<{
+          organizationId?: string;
           organizationName?: string;
           email?: string;
         }>(
@@ -68,6 +81,7 @@ export default function OnboardingPage() {
           return;
         }
 
+        setInviteOrganizationId(result.data.organizationId ?? '');
         setInviteOrgName(result.data.organizationName ?? '');
         setInviteEmail(result.data.email ?? '');
         setInviteCode(inviteToken);
@@ -139,48 +153,115 @@ export default function OnboardingPage() {
     }
   }
 
-  async function handleJoinOrganization(token: string) {
-    if (loading) return;
+  const handleJoinOrganization = useCallback(
+    async (token: string) => {
+      if (loading) return;
 
-    setFormError('');
-    setFieldErrors({});
+      setFormError('');
+      setFieldErrors({});
 
-    const parsed = joinOrganizationSchema.safeParse({ token });
-    if (!parsed.success) {
-      setFieldErrors({ token: parsed.error.issues[0]?.message ?? 'Invalid token' });
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const result = await apiFetch<{ redirectTo?: string }>(
-        '/onboarding/join-organization',
-        {
-          method: 'POST',
-          body: JSON.stringify(parsed.data),
-        },
-      );
-
-      if (!result.ok) {
-        setFormError(result.error);
+      const parsed = joinOrganizationSchema.safeParse({ token });
+      if (!parsed.success) {
+        setFieldErrors({
+          token: parsed.error.issues[0]?.message ?? 'Invalid token',
+        });
         return;
       }
 
-      router.push(result.data.redirectTo ?? '/dashboard');
-      router.refresh();
-    } catch {
-      setFormError('Unable to join organization. Check your connection and try again.');
-    } finally {
-      setLoading(false);
-    }
-  }
+      setLoading(true);
+      try {
+        const result = await apiFetch<{ redirectTo?: string }>(
+          '/onboarding/join-organization',
+          {
+            method: 'POST',
+            body: JSON.stringify(parsed.data),
+          },
+        );
+
+        if (!result.ok) {
+          if (result.status === 403) {
+            setFormError(
+              result.error === 'Forbidden'
+                ? 'This invitation cannot be accepted by this account. Sign in with the invited email, verify it, and try again.'
+                : result.error,
+            );
+          } else if (result.status === 409) {
+            setFormError(
+              result.error.toLowerCase().includes('already')
+                ? 'You are already a member. Go to the workspace or refresh your account.'
+                : `${result.error} Ask an organization admin for a new invitation if needed.`,
+            );
+          } else {
+            setFormError(result.error);
+          }
+          return;
+        }
+
+        router.push(result.data.redirectTo ?? '/dashboard');
+        router.refresh();
+      } catch {
+        setFormError(
+          'Unable to join organization. Check your connection and try again.',
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loading, router],
+  );
 
   async function handleJoinSubmit(event: React.FormEvent) {
     event.preventDefault();
     await handleJoinOrganization(inviteCode);
   }
 
-  async function switchAccount() {
+  const normalizedInviteEmail = inviteEmail.trim().toLowerCase();
+  const normalizedCurrentEmail = currentUser?.email.trim().toLowerCase() ?? '';
+  const emailMatches =
+    Boolean(currentUser) &&
+    Boolean(normalizedInviteEmail) &&
+    normalizedInviteEmail === normalizedCurrentEmail;
+  const existingMembership = currentUser?.memberships.find(
+    (membership) => membership.organizationId === inviteOrganizationId,
+  );
+  const inviteReturnPath = getInviteReturnPath(inviteToken);
+  const loginHref = getInviteAuthHref(
+    '/login',
+    inviteEmail,
+    inviteReturnPath,
+  );
+  const signupHref = getInviteAuthHref(
+    '/signup',
+    inviteEmail,
+    inviteReturnPath,
+  );
+
+  useEffect(() => {
+    if (
+      autoAcceptRequested &&
+      !autoAcceptAttempted.current &&
+      !previewLoading &&
+      step === 'invite-confirm' &&
+      currentUser &&
+      emailMatches &&
+      currentUser.emailVerifiedAt &&
+      !existingMembership
+    ) {
+      autoAcceptAttempted.current = true;
+      void handleJoinOrganization(inviteToken);
+    }
+  }, [
+    autoAcceptRequested,
+    currentUser,
+    emailMatches,
+    existingMembership,
+    handleJoinOrganization,
+    inviteToken,
+    previewLoading,
+    step,
+  ]);
+
+  async function switchAccount(destination: '/login' | '/signup') {
     if (loading) return;
     setLoading(true);
     setFormError('');
@@ -195,8 +276,33 @@ export default function OnboardingPage() {
       return;
     }
 
-    const returnTo = `/onboarding?invite=${encodeURIComponent(inviteCode)}`;
-    router.replace(`/login?from=${encodeURIComponent(returnTo)}`);
+    router.replace(destination === '/login' ? loginHref : signupHref);
+    router.refresh();
+  }
+
+  async function goToWorkspace() {
+    if (!currentUser || !existingMembership || loading) return;
+    if (currentUser.activeOrganizationId === inviteOrganizationId) {
+      router.push('/dashboard');
+      return;
+    }
+
+    setLoading(true);
+    setFormError('');
+    const result = await apiFetch<{ redirectTo?: string }>(
+      '/onboarding/switch-organization',
+      {
+        method: 'POST',
+        body: JSON.stringify({ organizationId: inviteOrganizationId }),
+      },
+    );
+    setLoading(false);
+
+    if (!result.ok) {
+      setFormError(result.error);
+      return;
+    }
+    router.push(result.data.redirectTo ?? '/dashboard');
     router.refresh();
   }
 
@@ -348,24 +454,81 @@ export default function OnboardingPage() {
                 ) : null}
               </div>
 
-              <Button
-                type="button"
-                className="w-full"
-                onClick={() => handleJoinOrganization(inviteCode)}
-                disabled={loading}
-              >
-                {loading ? 'Joining…' : 'Accept and join'}
-                <ArrowRightIcon />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full"
-                onClick={switchAccount}
-                disabled={loading}
-              >
-                Not your email? Sign in with another account
-              </Button>
+              {!currentUser ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Button asChild>
+                    <a href={signupHref}>Create account</a>
+                  </Button>
+                  <Button asChild variant="outline">
+                    <a href={loginHref}>Sign in</a>
+                  </Button>
+                </div>
+              ) : !emailMatches ? (
+                <div className="space-y-3">
+                  <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm">
+                    This invite is for <strong>{inviteEmail}</strong>, but
+                    you&apos;re signed in as <strong>{currentUser.email}</strong>.
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Switch accounts to continue with the invited email.
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Button
+                      type="button"
+                      onClick={() => switchAccount('/login')}
+                      disabled={loading}
+                    >
+                      Sign in as another user
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => switchAccount('/signup')}
+                      disabled={loading}
+                    >
+                      Create invited account
+                    </Button>
+                  </div>
+                </div>
+              ) : existingMembership ? (
+                <div className="space-y-3">
+                  <p className="rounded-lg border border-border bg-accent p-3 text-sm font-medium">
+                    Already a member
+                  </p>
+                  <Button
+                    type="button"
+                    className="w-full"
+                    onClick={goToWorkspace}
+                    disabled={loading}
+                  >
+                    {loading ? 'Opening…' : 'Go to workspace'}
+                    <ArrowRightIcon />
+                  </Button>
+                </div>
+              ) : !currentUser.emailVerifiedAt ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    Verify {currentUser.email} before accepting this invitation.
+                  </p>
+                  <Button asChild className="w-full">
+                    <a
+                      href={`/verify-email?from=${encodeURIComponent(inviteReturnPath)}`}
+                    >
+                      Verify email
+                    </a>
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  className="w-full"
+                  onClick={() => handleJoinOrganization(inviteCode)}
+                  disabled={loading}
+                >
+                  {loading ? 'Joining…' : 'Accept and join'}
+                  <ArrowRightIcon />
+                </Button>
+              )}
             </div>
           ) : null}
         </div>

@@ -7,7 +7,14 @@ import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/database/prisma.service';
 
 type OrganizationResponse = { id: string };
-type FileResponse = { id: string; filename: string };
+type FileResponse = {
+  id: string;
+  filename: string;
+  processingStatus: string;
+};
+type InviteResponse = { token: string };
+
+jest.setTimeout(30_000);
 
 describe('App (e2e)', () => {
   let app: INestApplication<App>;
@@ -70,9 +77,10 @@ describe('App (e2e)', () => {
     const file = await agent
       .post('/api/files/text')
       .send({ filename: 'notes.txt', content: 'Tenant-scoped file content' })
-      .expect(201);
+      .expect(202);
     const fileBody = file.body as FileResponse;
     expect(fileBody.filename).toBe('notes.txt');
+    expect(fileBody.processingStatus).toBe('PENDING_SCAN');
     const prisma = app.get(PrismaService);
     const rlsTables = await prisma.$queryRaw<
       {
@@ -83,9 +91,14 @@ describe('App (e2e)', () => {
     >`
       SELECT relname, relrowsecurity, relforcerowsecurity
       FROM pg_class
-      WHERE relname IN ('Memory', 'StoredFile', 'MessageAttachment')
+      WHERE relname IN (
+        'Memory',
+        'StoredFile',
+        'MessageAttachment',
+        'FileProcessingJob'
+      )
     `;
-    expect(rlsTables).toHaveLength(3);
+    expect(rlsTables).toHaveLength(4);
     expect(
       rlsTables.every(
         (table) => table.relrowsecurity && table.relforcerowsecurity,
@@ -107,11 +120,60 @@ describe('App (e2e)', () => {
     expect(updatedOrganizations.body as OrganizationResponse[]).toHaveLength(2);
     await agent.get('/api/files').expect(200, []);
     await agent.get('/api/memories').expect(200, []);
+    await agent.get(`/api/files/${fileBody.id}/download`).expect(404);
 
     await agent
       .post('/api/onboarding/switch-organization')
       .send({ organizationId: organizationBody[0]?.id })
       .expect(200);
+
+    const models = await agent
+      .get('/api/organizations/providers/models')
+      .expect(200);
+    expect(Array.isArray(models.body)).toBe(true);
+    expect(models.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ provider: 'OPENAI', isDefault: true }),
+      ]),
+    );
+
+    const memberEmail = `member-${Date.now()}@example.com`;
+    const invite = await agent
+      .post('/api/organizations/invites')
+      .send({ email: memberEmail, role: 'MEMBER' })
+      .expect(201);
+    const memberAgent = request.agent(app.getHttpServer());
+    await memberAgent
+      .post('/api/auth/register')
+      .send({
+        name: 'E2E Member',
+        email: memberEmail,
+        password: 'password123',
+      })
+      .expect(201);
+    await memberAgent
+      .post('/api/auth/verify-email')
+      .send({ otp: '0000' })
+      .expect(200);
+    await memberAgent
+      .post('/api/onboarding/join-organization')
+      .send({ token: (invite.body as InviteResponse).token })
+      .expect(200);
+    await memberAgent.get('/api/organizations/usage/me').expect(200);
+    await memberAgent.get('/api/organizations/usage').expect(403);
+    await memberAgent
+      .patch('/api/organizations/usage-limits')
+      .send({ monthlySpendLimitCents: 1, monthlyTokenLimit: 1 })
+      .expect(403);
+    await memberAgent.get('/api/organizations/providers/models').expect(200);
+    await memberAgent
+      .post('/api/organizations/providers')
+      .send({
+        provider: 'OPENAI',
+        apiKey: 'test-key-never-sent',
+        defaultModel: 'gpt-4o-mini',
+      })
+      .expect(403);
 
     await agent.get('/api/chat/conversations').expect(200);
     const chat = await agent
@@ -123,6 +185,26 @@ describe('App (e2e)', () => {
       })
       .expect(201);
     expect(chat.text).toContain('No AI provider is connected');
+
+    await agent
+      .patch('/api/auth/profile')
+      .send({ name: 'Updated E2E User' })
+      .expect(200);
+    await agent
+      .post('/api/auth/change-password')
+      .send({
+        currentPassword: 'wrong-password',
+        newPassword: 'replacement123',
+      })
+      .expect(401);
+    await agent
+      .post('/api/auth/change-password')
+      .send({
+        currentPassword: 'password123',
+        newPassword: 'replacement123',
+      })
+      .expect(200);
+    await agent.get('/api/auth/me').expect(401);
   });
 
   afterEach(async () => {

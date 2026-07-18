@@ -1,7 +1,10 @@
 import { Suspense } from 'react';
 import OnboardingPage from './OnboardingClient';
+import { getCurrentUser } from '@/lib/api/server';
 
-export default function OnboardingRoutePage() {
+export default async function OnboardingRoutePage() {
+  const currentUser = await getCurrentUser();
+
   return (
     <Suspense
       fallback={
@@ -10,7 +13,7 @@ export default function OnboardingRoutePage() {
         </div>
       }
     >
-      <OnboardingPage />
+      <OnboardingPage currentUser={currentUser} />
     </Suspense>
   );
 }

@@ -13,6 +13,30 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
+  clamav:
+    image: clamav/clamav:1.4.3
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping=1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 90s
+    volumes:
+      - clamav-data:/var/lib/clamav
+
+  migrate:
+    build:
+      context: .
+      target: api
+    env_file: apps/api/.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/contexual_dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: npm run db:deploy
+    restart: "no"
+
   api:
     build:
       context: .
@@ -20,16 +44,47 @@ services:
     env_file: apps/api/.env
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/contexual_dev
-      WEB_URL: http://localhost:3000
+      CLAMAV_HOST: clamav
+      FILE_SCANNING_REQUIRED: "true"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
-    command: sh -c "npm run db:deploy && npm run start:prod --workspace=@repo/api"
+      clamav:
+        condition: service_healthy
     ports:
       - "3001:3001"
-    volumes:
-      - uploads:/app/apps/api/.uploads
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://127.0.0.1:3001/api/health/ready",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
+  file-worker:
+    build:
+      context: .
+      target: worker
+    env_file: apps/api/.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/contexual_dev
+      CLAMAV_HOST: clamav
+      FILE_SCANNING_REQUIRED: "true"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
   web:
     build:
       context: .
@@ -38,10 +93,24 @@ services:
     environment:
       INTERNAL_API_URL: http://api:3001
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
       - "3000:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://127.0.0.1:3000/login",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
 volumes:
   postgres-data:
-  uploads:
+  clamav-data:

@@ -6,11 +6,13 @@ import { usePathname } from 'next/navigation';
 import {
   ActivityIcon,
   CreditCardIcon,
+  FilesIcon,
   LayoutDashboardIcon,
   type LucideIcon,
   MenuIcon,
   MessagesSquareIcon,
   PlugIcon,
+  SettingsIcon,
   SparklesIcon,
   UsersIcon,
   XIcon,
@@ -37,11 +39,13 @@ type NavGroup = {
 const ICONS: Record<string, LucideIcon> = {
   '/dashboard': LayoutDashboardIcon,
   '/dashboard/chat': MessagesSquareIcon,
+  '/dashboard/files': FilesIcon,
   '/dashboard/memories': SparklesIcon,
   '/dashboard/team': UsersIcon,
   '/dashboard/providers': PlugIcon,
   '/dashboard/usage': CreditCardIcon,
   '/dashboard/audit': ActivityIcon,
+  '/dashboard/settings': SettingsIcon,
 };
 
 type DashboardShellProps = {
@@ -73,6 +77,11 @@ export function DashboardShell({
           icon: ICONS['/dashboard/chat'],
         },
         {
+          href: '/dashboard/files',
+          label: 'Files',
+          icon: ICONS['/dashboard/files'],
+        },
+        {
           href: '/dashboard/memories',
           label: 'Memories',
           icon: ICONS['/dashboard/memories'],
@@ -92,6 +101,16 @@ export function DashboardShell({
           label: 'Providers',
           icon: ICONS['/dashboard/providers'],
         },
+        {
+          href: '/dashboard/usage',
+          label: isAdmin ? 'Usage & billing' : 'My usage',
+          icon: ICONS['/dashboard/usage'],
+        },
+        {
+          href: '/dashboard/settings',
+          label: 'Settings',
+          icon: ICONS['/dashboard/settings'],
+        },
       ],
     },
   ];
@@ -100,11 +119,6 @@ export function DashboardShell({
     groups.push({
       label: 'Admin',
       items: [
-        {
-          href: '/dashboard/usage',
-          label: 'Usage & billing',
-          icon: ICONS['/dashboard/usage'],
-        },
         {
           href: '/dashboard/audit',
           label: 'Audit log',
@@ -116,7 +130,9 @@ export function DashboardShell({
 
   const activeItem = groups
     .flatMap((group) => group.items)
-    .filter((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))
+    .filter(
+      (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
+    )
     .sort((a, b) => b.href.length - a.href.length)[0];
   const pageTitle = activeItem?.label ?? 'Dashboard';
 
@@ -214,11 +230,7 @@ export function DashboardShell({
           <h1 className="text-base font-semibold">{pageTitle}</h1>
           <div className="ml-auto flex items-center gap-1.5">
             <ThemeToggle />
-            <UserMenu
-              name={user.name}
-              email={user.email}
-              role={user.role}
-            />
+            <UserMenu name={user.name} email={user.email} role={user.role} />
           </div>
         </header>
 

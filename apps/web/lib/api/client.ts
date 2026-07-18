@@ -10,19 +10,25 @@ const AUTH_ROUTES_WITHOUT_REFRESH = new Set([
   '/auth/logout',
 ]);
 
-type ApiResult<T> =
+export type ApiResult<T> =
   | { ok: true; data: T }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      status?: number;
+      code?: string;
+      networkError?: boolean;
+    };
 
 function getErrorMessage(body: Record<string, unknown>): string {
-  if (typeof body.error === 'string') {
-    return body.error;
-  }
-  if (Array.isArray(body.message)) {
+  if (Array.isArray(body.message) && body.message.length > 0) {
     return String(body.message[0]);
   }
-  if (typeof body.message === 'string') {
+  if (typeof body.message === 'string' && body.message.length > 0) {
     return body.message;
+  }
+  if (typeof body.error === 'string' && body.error.length > 0) {
+    return body.error;
   }
   return 'Request failed';
 }
@@ -74,7 +80,16 @@ export async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<ApiResult<T>> {
-  const response = await fetchWithRefresh(path, options);
+  let response: Response;
+  try {
+    response = await fetchWithRefresh(path, options);
+  } catch {
+    return {
+      ok: false,
+      error: 'Unable to reach the server. Check your connection and try again.',
+      networkError: true,
+    };
+  }
 
   const data = (await response.json().catch(() => ({}))) as T &
     Record<string, unknown>;
@@ -83,6 +98,8 @@ export async function apiFetch<T>(
     return {
       ok: false,
       error: getErrorMessage(data as Record<string, unknown>),
+      status: response.status,
+      code: typeof data.code === 'string' ? data.code : undefined,
     };
   }
 
@@ -114,10 +131,18 @@ export async function streamChat(
   },
   onEvent: (event: ChatStreamEvent) => void,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const response = await fetchWithRefresh('/chat/messages/stream', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await fetchWithRefresh('/chat/messages/stream', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return {
+      ok: false,
+      error: 'Unable to reach the server. Check your connection and try again.',
+    };
+  }
 
   if (!response.ok) {
     const data = (await response.json().catch(() => ({}))) as Record<

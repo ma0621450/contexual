@@ -317,7 +317,7 @@ export class OnboardingService {
       where: { token },
       include: {
         organization: {
-          select: { name: true },
+          select: { id: true, name: true },
         },
       },
     });
@@ -339,6 +339,7 @@ export class OnboardingService {
     }
 
     return {
+      organizationId: invite.organization.id,
       organizationName: invite.organization.name,
       email: invite.email,
       role: invite.role,

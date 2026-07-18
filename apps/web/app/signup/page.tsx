@@ -1,17 +1,27 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { registerSchema } from '@/lib/validations/auth';
 import { apiFetch } from '@/lib/api/client';
 import { AuthError, AuthLayout, AuthLink } from '@/components/auth/AuthLayout';
 import { FormField } from '@/components/auth/FormField';
 import { Button } from '@/components/ui/button';
+import { getSafeInternalReturnPath } from '@/lib/auth/return-path';
 
-export default function SignUpPage() {
+function SignUpForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnPath = getSafeInternalReturnPath(searchParams.get('from'));
+  const queryEmail = searchParams.get('email') ?? '';
+  const isInviteSignup =
+    Boolean(returnPath?.startsWith('/onboarding?')) &&
+    Boolean(
+      new URLSearchParams(returnPath?.split('?')[1] ?? '').get('invite'),
+    ) &&
+    Boolean(queryEmail);
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(queryEmail);
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState('');
@@ -47,9 +57,19 @@ export default function SignUpPage() {
       return;
     }
 
-    router.push(result.data.redirectTo ?? '/verify-email');
+    const verifyHref = returnPath
+      ? `/verify-email?from=${encodeURIComponent(returnPath)}`
+      : (result.data.redirectTo ?? '/verify-email');
+    router.push(verifyHref);
     router.refresh();
   }
+
+  const loginParams = new URLSearchParams();
+  if (returnPath) loginParams.set('from', returnPath);
+  if (queryEmail) loginParams.set('email', queryEmail);
+  const loginHref = loginParams.size
+    ? `/login?${loginParams.toString()}`
+    : '/login';
 
   return (
     <AuthLayout
@@ -57,7 +77,7 @@ export default function SignUpPage() {
       subtitle="Get started with Contexual — set up your workspace next"
       footer={
         <p>
-          Already have an account? <AuthLink href="/login">Sign in</AuthLink>
+          Already have an account? <AuthLink href={loginHref}>Sign in</AuthLink>
         </p>
       }
     >
@@ -81,7 +101,13 @@ export default function SignUpPage() {
           value={email}
           onChange={(event) => setEmail(event.target.value)}
           error={fieldErrors.email}
+          readOnly={isInviteSignup}
         />
+        {isInviteSignup ? (
+          <p className="-mt-3 text-xs text-muted-foreground">
+            This invitation is tied to this email address.
+          </p>
+        ) : null}
 
         <FormField
           label="Password"
@@ -98,5 +124,13 @@ export default function SignUpPage() {
         </Button>
       </form>
     </AuthLayout>
+  );
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense>
+      <SignUpForm />
+    </Suspense>
   );
 }

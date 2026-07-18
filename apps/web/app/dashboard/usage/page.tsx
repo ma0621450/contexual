@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import {
   getBillingStatus,
   getCurrentUser,
+  getMyUsage,
   getTeamOverview,
   getUsage,
 } from '@/lib/api/server';
@@ -26,19 +27,19 @@ export default async function UsagePage({ searchParams }: UsagePageProps) {
     redirect('/onboarding');
   }
 
-  if (user.role !== 'ADMIN') {
-    redirect('/dashboard');
-  }
-
   const params = await searchParams;
-  const [usage, overview, billing] = await Promise.all([
-    getUsage(),
-    getTeamOverview(),
-    getBillingStatus(),
+  const isAdmin = user.role === 'ADMIN';
+  const [myUsage, usage, overview, billing] = await Promise.all([
+    getMyUsage(),
+    isAdmin ? getUsage() : Promise.resolve(null),
+    isAdmin ? getTeamOverview() : Promise.resolve(null),
+    isAdmin ? getBillingStatus() : Promise.resolve(null),
   ]);
 
   return (
     <UsageClient
+      isAdmin={isAdmin}
+      myUsage={myUsage}
       usage={usage}
       overview={overview}
       billing={billing}
