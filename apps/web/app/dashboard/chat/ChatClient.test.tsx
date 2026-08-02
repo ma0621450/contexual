@@ -153,6 +153,10 @@ describe('ChatClient model catalog', () => {
             id: 'msg-1',
             role: 'ASSISTANT',
             content: [
+              '<thinking>',
+              'Check pricing first',
+              '</thinking>',
+              '',
               '## Launch plan',
               '',
               '1. **Before Launch**',
@@ -164,6 +168,15 @@ describe('ChatClient model catalog', () => {
               '',
               '```ts',
               'const total = 10;',
+              '```',
+              '',
+              '```mcq',
+              JSON.stringify({
+                question: 'What is the AWS cost?',
+                options: ['$5', '$10', '$15'],
+                answer: 1,
+                explanation: 'From the table',
+              }),
               '```',
             ].join('\n'),
             createdAt: new Date().toISOString(),
@@ -204,12 +217,17 @@ describe('ChatClient model catalog', () => {
     expect(
       await screen.findByRole('heading', { name: 'Launch plan' }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Thought process/i }),
+    ).toBeInTheDocument();
     expect(screen.getByText('Before Launch').tagName).toBe('STRONG');
     expect(screen.getByRole('table')).toBeInTheDocument();
     expect(screen.getByRole('cell', { name: '$10' })).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Copy code' }),
     ).toBeInTheDocument();
+    expect(screen.getByText('What is the AWS cost?')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /\$10/ })).toBeInTheDocument();
     expect(screen.queryByText(/\*\*Before Launch\*\*/)).not.toBeInTheDocument();
   });
 

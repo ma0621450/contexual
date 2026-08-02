@@ -17,11 +17,16 @@ import remarkMath from 'remark-math';
 import remarkBreaks from 'remark-breaks';
 import rehypeKatex from 'rehype-katex';
 import rehypeHighlight from 'rehype-highlight';
-import { CheckIcon, CopyIcon } from 'lucide-react';
+import { CheckIcon, CopyIcon, EyeIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { isPreviewableLanguage } from './parseMessageContent';
+import { DiffBlock, MermaidBlock } from './RichBlocks';
 import 'katex/dist/katex.min.css';
 
 const InsideCodeBlock = createContext(false);
+const CanvasActionContext = createContext<
+  ((language: string, code: string) => void) | undefined
+>(undefined);
 
 function toPlainText(node: ReactNode): string {
   if (node === null || node === undefined || typeof node === 'boolean') {
@@ -82,6 +87,26 @@ function CopyButton({ value, label }: { value: string; label: string }) {
 function CodeBlock({ children }: { children: ReactNode }) {
   const language = readLanguage(children);
   const code = toPlainText(children);
+  const onOpenCanvas = useContext(CanvasActionContext);
+  const canPreview = Boolean(onOpenCanvas && isPreviewableLanguage(language));
+  const normalized = language.toLowerCase();
+
+  if (normalized === 'diff') {
+    return <DiffBlock content={code} />;
+  }
+
+  if (normalized === 'mermaid') {
+    return (
+      <MermaidBlock
+        content={code}
+        onOpenCanvas={
+          onOpenCanvas
+            ? () => onOpenCanvas('mermaid', code)
+            : undefined
+        }
+      />
+    );
+  }
 
   return (
     <div className="not-prose group/code my-4 overflow-hidden rounded-xl border border-border bg-muted/40">
@@ -89,7 +114,19 @@ function CodeBlock({ children }: { children: ReactNode }) {
         <span className="font-mono text-[11px] tracking-wide text-muted-foreground uppercase">
           {language || 'text'}
         </span>
-        <CopyButton value={code} label="Copy code" />
+        <div className="flex items-center gap-1">
+          {canPreview ? (
+            <button
+              type="button"
+              onClick={() => onOpenCanvas?.(language, code)}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            >
+              <EyeIcon className="size-3.5" />
+              Canvas
+            </button>
+          ) : null}
+          <CopyButton value={code} label="Copy code" />
+        </div>
       </div>
       <InsideCodeBlock.Provider value={true}>
         <pre className="overflow-x-auto p-4 text-[13px] leading-relaxed">
@@ -225,25 +262,33 @@ const components: Components = {
     </a>
   ),
   table: ({ children }) => (
-    <div className="my-4 w-full overflow-x-auto rounded-xl border border-border first:mt-0 last:mb-0">
-      <table className="w-full border-collapse text-sm">{children}</table>
+    <div className="my-4 w-full overflow-x-auto rounded-xl border border-border shadow-sm first:mt-0 last:mb-0">
+      <table className="w-full min-w-[20rem] border-collapse text-sm">
+        {children}
+      </table>
     </div>
   ),
-  thead: ({ children }) => <thead className="bg-muted/60">{children}</thead>,
-  tbody: ({ children }) => (
-    <tbody className="divide-y divide-border">{children}</tbody>
+  thead: ({ children }) => (
+    <thead className="bg-muted/70 text-foreground">{children}</thead>
   ),
-  tr: ({ children }) => <tr className="border-b border-border">{children}</tr>,
+  tbody: ({ children }) => (
+    <tbody className="divide-y divide-border bg-card/40">{children}</tbody>
+  ),
+  tr: ({ children }) => (
+    <tr className="border-b border-border transition-colors even:bg-muted/20 hover:bg-muted/35">
+      {children}
+    </tr>
+  ),
   th: ({ children, style }) => (
     <th
       style={style}
-      className="px-3 py-2 text-left font-semibold whitespace-nowrap text-foreground"
+      className="px-3.5 py-2.5 text-left text-xs font-semibold tracking-wide whitespace-nowrap text-foreground uppercase"
     >
       {children}
     </th>
   ),
   td: ({ children, style }) => (
-    <td style={style} className="px-3 py-2 align-top">
+    <td style={style} className="px-3.5 py-2.5 align-top leading-6">
       {children}
     </td>
   ),
@@ -267,24 +312,28 @@ const rehypePlugins: PluggableList = [
 export const Markdown = memo(function Markdown({
   content,
   className,
+  onOpenCanvas,
 }: {
   content: string;
   className?: string;
+  onOpenCanvas?: (language: string, code: string) => void;
 }) {
   return (
-    <div
-      className={cn(
-        'markdown-body text-[0.9375rem] wrap-break-word text-foreground',
-        className,
-      )}
-    >
-      <ReactMarkdown
-        components={components}
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
+    <CanvasActionContext.Provider value={onOpenCanvas}>
+      <div
+        className={cn(
+          'markdown-body text-[0.9375rem] wrap-break-word text-foreground',
+          className,
+        )}
       >
-        {content}
-      </ReactMarkdown>
-    </div>
+        <ReactMarkdown
+          components={components}
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={rehypePlugins}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
+    </CanvasActionContext.Provider>
   );
 });

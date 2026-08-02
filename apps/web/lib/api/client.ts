@@ -136,14 +136,22 @@ export async function streamChat(
     attachmentIds?: string[];
   },
   onEvent: (event: ChatStreamEvent) => void,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+  options?: { signal?: AbortSignal },
+): Promise<{ ok: true } | { ok: false; error: string; aborted?: boolean }> {
   let response: Response;
   try {
     response = await fetchWithRefresh('/chat/messages/stream', {
       method: 'POST',
       body: JSON.stringify(body),
+      signal: options?.signal,
     });
-  } catch {
+  } catch (error) {
+    if (
+      options?.signal?.aborted ||
+      (error instanceof DOMException && error.name === 'AbortError')
+    ) {
+      return { ok: false, error: 'Generation stopped', aborted: true };
+    }
     return {
       ok: false,
       error: 'Unable to reach the server. Check your connection and try again.',
@@ -166,39 +174,144 @@ export async function streamChat(
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
+  try {
+    while (true) {
+      if (options?.signal?.aborted) {
+        await reader.cancel();
+        return { ok: false, error: 'Generation stopped', aborted: true };
+      }
 
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split('\n\n');
-    buffer = chunks.pop() ?? '';
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
 
-    for (const chunk of chunks) {
-      for (const line of chunk.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data:')) {
-          continue;
-        }
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split('\n\n');
+      buffer = chunks.pop() ?? '';
 
-        const payload = trimmed.slice(5).trim();
-        if (!payload) {
-          continue;
-        }
-
-        try {
-          const event = JSON.parse(payload) as ChatStreamEvent;
-          onEvent(event);
-          if (event.type === 'error') {
-            return { ok: false, error: event.message };
+      for (const chunk of chunks) {
+        for (const line of chunk.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) {
+            continue;
           }
-        } catch {
-          continue;
+
+          const payload = trimmed.slice(5).trim();
+          if (!payload) {
+            continue;
+          }
+
+          try {
+            const event = JSON.parse(payload) as ChatStreamEvent;
+            onEvent(event);
+            if (event.type === 'error') {
+              return { ok: false, error: event.message };
+            }
+          } catch {
+            continue;
+          }
         }
       }
     }
+  } catch (error) {
+    if (
+      options?.signal?.aborted ||
+      (error instanceof DOMException && error.name === 'AbortError')
+    ) {
+      return { ok: false, error: 'Generation stopped', aborted: true };
+    }
+    throw error;
+  }
+
+  return { ok: true };
+}
+
+export async function streamRegenerate(
+  body: {
+    conversationId: string;
+    assistantMessageId: string;
+    model?: string;
+  },
+  onEvent: (event: ChatStreamEvent) => void,
+  options?: { signal?: AbortSignal },
+): Promise<{ ok: true } | { ok: false; error: string; aborted?: boolean }> {
+  let response: Response;
+  try {
+    response = await fetchWithRefresh('/chat/messages/regenerate/stream', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal: options?.signal,
+    });
+  } catch (error) {
+    if (
+      options?.signal?.aborted ||
+      (error instanceof DOMException && error.name === 'AbortError')
+    ) {
+      return { ok: false, error: 'Generation stopped', aborted: true };
+    }
+    return {
+      ok: false,
+      error: 'Unable to reach the server. Check your connection and try again.',
+    };
+  }
+
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as Record<
+      string,
+      unknown
+    >;
+    return { ok: false, error: getErrorMessage(data) };
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return { ok: false, error: 'No response stream' };
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      if (options?.signal?.aborted) {
+        await reader.cancel();
+        return { ok: false, error: 'Generation stopped', aborted: true };
+      }
+
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split('\n\n');
+      buffer = chunks.pop() ?? '';
+
+      for (const chunk of chunks) {
+        for (const line of chunk.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload) continue;
+          try {
+            const event = JSON.parse(payload) as ChatStreamEvent;
+            onEvent(event);
+            if (event.type === 'error') {
+              return { ok: false, error: event.message };
+            }
+          } catch {
+            continue;
+          }
+        }
+      }
+    }
+  } catch (error) {
+    if (
+      options?.signal?.aborted ||
+      (error instanceof DOMException && error.name === 'AbortError')
+    ) {
+      return { ok: false, error: 'Generation stopped', aborted: true };
+    }
+    throw error;
   }
 
   return { ok: true };

@@ -14,15 +14,17 @@ import {
   PaperclipIcon,
   PanelLeftIcon,
   PlusIcon,
+  RefreshCwIcon,
   SearchIcon,
   SendIcon,
   SparklesIcon,
+  SquareIcon,
   Trash2Icon,
   TriangleAlertIcon,
   UploadIcon,
   XIcon,
 } from 'lucide-react';
-import { streamChat, apiFetch } from '@/lib/api/client';
+import { streamChat, streamRegenerate, apiFetch } from '@/lib/api/client';
 import type {
   ChatMessage,
   ConversationDetail,
@@ -32,7 +34,9 @@ import type {
 } from '@/lib/api/server';
 import { waitForFileTerminal } from '@/lib/files';
 import { cn } from '@/lib/utils';
-import { Markdown } from '@/components/chat/Markdown';
+import { CanvasModal } from '@/components/chat/CanvasPanel';
+import { MessageContent } from '@/components/chat/MessageContent';
+import type { CanvasArtifact } from '@/components/chat/parseMessageContent';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -68,13 +72,29 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 const SUGGESTIONS = [
-  'Summarize the key points of my attached document',
-  'Draft a project update email for stakeholders',
-  'Explain this concept with a simple example',
-  'Compare the options in a table with pros and cons',
+  'Help me with my project',
+  'Compare three pricing plans in a clean markdown table',
+  'Quiz me with 3 multiple-choice questions on TypeScript',
+  'Show your reasoning, then explain recursion with a short example',
+  'Build a small HTML + CSS card preview I can open in canvas',
+  'Draw a mermaid flowchart for user signup',
 ];
 
+type MessageUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  estimatedCostCents: number;
+  model: string;
+};
+
 const MAX_ATTACHMENTS = 5;
+
+function createTempId(prefix: string) {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 type ChatClientProps = {
   initialConversations: ConversationSummary[];
@@ -102,8 +122,6 @@ type PendingUpload = {
   filename: string;
   stage: 'uploading' | 'processing';
 };
-
-let tempIdCounter = 0;
 
 export function ChatClient({
   initialConversations,
@@ -170,10 +188,15 @@ export function ChatClient({
   const [atBottom, setAtBottom] = useState(true);
   const [error, setError] = useState('');
   const [failedMessage, setFailedMessage] = useState('');
+  const [activeCanvas, setActiveCanvas] = useState<CanvasArtifact | null>(null);
+  const [messageUsage, setMessageUsage] = useState<Record<string, MessageUsage>>(
+    {},
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const uploading = pendingUploads.length > 0;
   const activeConversation = conversations.find((item) => item.id === activeId);
   const activeModelLabel =
@@ -209,6 +232,17 @@ export function ChatClient({
     element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
   }, [input]);
 
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && abortRef.current) {
+        event.preventDefault();
+        abortRef.current.abort();
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   function handleScroll() {
     const element = scrollRef.current;
     if (!element) return;
@@ -229,6 +263,8 @@ export function ChatClient({
     setError('');
     setSidebarOpen(false);
     setAtBottom(true);
+    setActiveCanvas(null);
+    setMessageUsage({});
     setLoadingConversation(true);
     try {
       const result = await apiFetch<ConversationDetail>(
@@ -250,6 +286,8 @@ export function ChatClient({
   }
 
   function startNewChat() {
+    abortRef.current?.abort();
+    abortRef.current = null;
     setActiveId(null);
     setMessages([]);
     setAttachments([]);
@@ -257,7 +295,13 @@ export function ChatClient({
     setFailedMessage('');
     setSidebarOpen(false);
     setAtBottom(true);
+    setActiveCanvas(null);
+    setMessageUsage({});
     setModel(defaultNewChatModel);
+  }
+
+  function stopGeneration() {
+    abortRef.current?.abort();
   }
 
   async function handleSend(event: React.FormEvent) {
@@ -323,13 +367,13 @@ export function ChatClient({
     }
 
     const optimisticUser: ChatMessage = {
-      id: `temp-user-${tempIdCounter++}`,
+      id: createTempId('temp-user'),
       role: 'USER',
       content: outgoingContent,
       createdAt: new Date().toISOString(),
       attachments: outgoingAttachments,
     };
-    const streamingAssistantId = `temp-assistant-${tempIdCounter++}`;
+    const streamingAssistantId = createTempId('temp-assistant');
     const streamingAssistant: ChatMessage = {
       id: streamingAssistantId,
       role: 'ASSISTANT',
@@ -341,6 +385,9 @@ export function ChatClient({
     setStreamingId(streamingAssistantId);
     setInput('');
     setAttachments([]);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       const result = await streamChat(
@@ -389,6 +436,10 @@ export function ChatClient({
                 message.id === streamingAssistantId ? event.message : message,
               ),
             );
+            setMessageUsage((prev) => ({
+              ...prev,
+              [event.message.id]: event.usage,
+            }));
 
             const nextModel = event.usage.model || model;
             const nextProvider =
@@ -418,18 +469,40 @@ export function ChatClient({
             );
           }
         },
+        { signal: controller.signal },
       );
 
       if (!result.ok) {
-        setError(result.error);
-        setFailedMessage(outgoingContent);
-        setAttachments(outgoingAttachments);
-        setMessages((prev) =>
-          prev.filter(
-            (m) => m.id !== optimisticUser.id && m.id !== streamingAssistantId,
-          ),
-        );
-        setInput(outgoingContent);
+        if (result.aborted) {
+          setMessages((prev) => {
+            const assistant = prev.find((m) => m.id === streamingAssistantId);
+            if (assistant && assistant.content.trim().length > 0) {
+              return prev.map((message) =>
+                message.id === streamingAssistantId
+                  ? {
+                      ...message,
+                      content: `${message.content}\n\n_Generation stopped._`,
+                    }
+                  : message,
+              );
+            }
+            return prev.filter(
+              (m) =>
+                m.id !== optimisticUser.id && m.id !== streamingAssistantId,
+            );
+          });
+        } else {
+          setError(result.error);
+          setFailedMessage(outgoingContent);
+          setAttachments(outgoingAttachments);
+          setMessages((prev) =>
+            prev.filter(
+              (m) =>
+                m.id !== optimisticUser.id && m.id !== streamingAssistantId,
+            ),
+          );
+          setInput(outgoingContent);
+        }
       }
     } catch {
       setError('Unable to send message. Check your connection.');
@@ -442,6 +515,103 @@ export function ChatClient({
       );
       setInput(outgoingContent);
     } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
+      setSending(false);
+      setStreamingId(null);
+    }
+  }
+
+  async function regenerateAssistant(messageId: string) {
+    if (sending || !activeId) return;
+    const index = messages.findIndex((message) => message.id === messageId);
+    if (index < 0 || messages[index]?.role !== 'ASSISTANT') return;
+
+    setError('');
+    setSending(true);
+    setAtBottom(true);
+
+    const streamingAssistantId = messageId;
+    setMessages((prev) =>
+      prev
+        .filter((_, messageIndex) => messageIndex <= index)
+        .map((message) =>
+          message.id === messageId ? { ...message, content: '' } : message,
+        ),
+    );
+    setStreamingId(streamingAssistantId);
+    setMessageUsage((prev) => {
+      const next = { ...prev };
+      delete next[messageId];
+      return next;
+    });
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const result = await streamRegenerate(
+        {
+          conversationId: activeId,
+          assistantMessageId: messageId,
+          model: model || undefined,
+        },
+        (event) => {
+          if (event.type === 'token') {
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === streamingAssistantId
+                  ? { ...message, content: message.content + event.content }
+                  : message,
+              ),
+            );
+          }
+
+          if (event.type === 'done') {
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === streamingAssistantId ? event.message : message,
+              ),
+            );
+            setMessageUsage((prev) => ({
+              ...prev,
+              [event.message.id]: event.usage,
+            }));
+
+            const nextModel = event.usage.model || model;
+            if (
+              nextModel &&
+              availableModels.some((item) => item.id === nextModel)
+            ) {
+              setModel(nextModel);
+            }
+            setConversations((prev) =>
+              prev.map((item) =>
+                item.id === event.conversationId
+                  ? {
+                      ...item,
+                      title: event.title,
+                      model: nextModel || item.model,
+                      updatedAt: new Date().toISOString(),
+                    }
+                  : item,
+              ),
+            );
+          }
+        },
+        { signal: controller.signal },
+      );
+
+      if (!result.ok && !result.aborted) {
+        setError(result.error);
+      }
+    } catch {
+      setError('Unable to regenerate the response.');
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
       setSending(false);
       setStreamingId(null);
     }
@@ -461,7 +631,7 @@ export function ChatClient({
     setError('');
     await Promise.all(
       selected.map(async (file) => {
-        const key = `${file.name}-${file.size}-${file.lastModified}-${tempIdCounter++}`;
+        const key = createTempId(`upload-${file.name}-${file.size}`);
         setPendingUploads((current) => [
           ...current,
           { key, filename: file.name, stage: 'uploading' },
@@ -819,10 +989,9 @@ export function ChatClient({
                       key={suggestion}
                       type="button"
                       onClick={() => {
-                        setInput(suggestion);
-                        textareaRef.current?.focus();
+                        void sendMessage(suggestion);
                       }}
-                      disabled={!providerConnected}
+                      disabled={!providerConnected || sending}
                       className="rounded-xl border border-border bg-card px-3.5 py-3 text-left text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-60"
                     >
                       {suggestion}
@@ -832,11 +1001,32 @@ export function ChatClient({
               </div>
             ) : (
               <div className="space-y-6">
-                {messages.map((message) => (
+                {messages.map((message, index) => (
                   <MessageRow
                     key={message.id}
                     message={message}
                     streaming={streamingId === message.id}
+                    usage={messageUsage[message.id]}
+                    isLastAssistant={
+                      message.role === 'ASSISTANT' &&
+                      messages
+                        .slice(index + 1)
+                        .every((item) => item.role !== 'ASSISTANT')
+                    }
+                    sending={sending}
+                    onOpenCanvas={setActiveCanvas}
+                    onContinueClarifying={
+                      !sending
+                        ? (text) => {
+                            void sendMessage(text);
+                          }
+                        : undefined
+                    }
+                    onRegenerate={
+                      !sending && activeId && !message.id.startsWith('temp-')
+                        ? () => void regenerateAssistant(message.id)
+                        : undefined
+                    }
                   />
                 ))}
               </div>
@@ -1028,27 +1218,43 @@ export function ChatClient({
                 </Select>
 
                 <span className="ml-auto hidden text-[11px] text-muted-foreground sm:block">
-                  Enter to send · Shift+Enter for a new line
+                  Enter to send · Esc to stop · Shift+Enter for a new line
                 </span>
 
-                <Button
-                  type="submit"
-                  size="icon"
-                  className="shrink-0 rounded-full"
-                  disabled={!canSend}
-                  aria-label="Send message"
-                >
-                  {sending ? (
-                    <LoaderCircleIcon className="size-4 animate-spin" />
-                  ) : (
+                {sending ? (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="secondary"
+                    className="shrink-0 rounded-full"
+                    onClick={stopGeneration}
+                    aria-label="Stop generating"
+                    title="Stop generating"
+                  >
+                    <SquareIcon className="size-3.5 fill-current" />
+                  </Button>
+                ) : (
+                  <Button
+                    type="submit"
+                    size="icon"
+                    className="shrink-0 rounded-full"
+                    disabled={!canSend}
+                    aria-label="Send message"
+                  >
                     <SendIcon className="size-4" />
-                  )}
-                </Button>
+                  </Button>
+                )}
               </div>
             </form>
           </div>
         </div>
       </section>
+
+      <CanvasModal
+        artifact={activeCanvas}
+        open={Boolean(activeCanvas)}
+        onClose={() => setActiveCanvas(null)}
+      />
 
       <Dialog
         open={libraryOpen}
@@ -1190,33 +1396,50 @@ export function ChatClient({
 function MessageRow({
   message,
   streaming,
+  usage,
+  isLastAssistant,
+  sending,
+  onOpenCanvas,
+  onContinueClarifying,
+  onRegenerate,
 }: {
   message: ChatMessage;
   streaming: boolean;
+  usage?: MessageUsage;
+  isLastAssistant?: boolean;
+  sending?: boolean;
+  onOpenCanvas: (artifact: CanvasArtifact) => void;
+  onContinueClarifying?: (message: string) => void;
+  onRegenerate?: () => void;
 }) {
   const isUser = message.role === 'USER';
 
   if (isUser) {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[85%] min-w-0 space-y-2 rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-primary-foreground sm:max-w-[75%]">
-          <p className="text-[0.9375rem] leading-7 whitespace-pre-wrap">
-            {message.content}
-          </p>
-          {message.attachments?.length ? (
-            <div className="space-y-1 border-t border-primary-foreground/25 pt-2">
-              {message.attachments.map((file) => (
-                <a
-                  key={file.id}
-                  href={`/api/files/${file.id}/download`}
-                  className="flex items-center gap-1.5 text-xs underline underline-offset-2"
-                >
-                  <FileIcon className="size-3.5 shrink-0" />
-                  <span className="truncate">{file.filename}</span>
-                </a>
-              ))}
-            </div>
-          ) : null}
+      <div className="group/message flex justify-end">
+        <div className="max-w-[85%] min-w-0 space-y-2 sm:max-w-[75%]">
+          <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-primary-foreground">
+            <p className="text-[0.9375rem] leading-7 whitespace-pre-wrap">
+              {message.content}
+            </p>
+            {message.attachments?.length ? (
+              <div className="space-y-1 border-t border-primary-foreground/25 pt-2">
+                {message.attachments.map((file) => (
+                  <a
+                    key={file.id}
+                    href={`/api/files/${file.id}/download`}
+                    className="flex items-center gap-1.5 text-xs underline underline-offset-2"
+                  >
+                    <FileIcon className="size-3.5 shrink-0" />
+                    <span className="truncate">{file.filename}</span>
+                  </a>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <div className="flex justify-end opacity-100 sm:opacity-0 sm:transition-opacity sm:focus-within:opacity-100 sm:group-hover/message:opacity-100">
+            <MessageCopyButton content={message.content} />
+          </div>
         </div>
       </div>
     );
@@ -1230,20 +1453,15 @@ function MessageRow({
         <SparklesIcon className="size-4" />
       </span>
       <div className="min-w-0 flex-1">
-        {empty ? (
-          <div className="flex h-8 items-center gap-1.5 text-muted-foreground">
-            <span className="size-2 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
-            <span className="size-2 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
-            <span className="size-2 animate-bounce rounded-full bg-current" />
-          </div>
-        ) : (
-          <>
-            <Markdown content={message.content} />
-            {streaming ? (
-              <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-foreground align-text-bottom" />
-            ) : null}
-          </>
-        )}
+        <MessageContent
+          content={message.content}
+          streaming={streaming}
+          disabled={sending}
+          onOpenCanvas={onOpenCanvas}
+          onContinueClarifying={
+            isLastAssistant && !streaming ? onContinueClarifying : undefined
+          }
+        />
 
         {message.attachments?.length ? (
           <div className="mt-3 space-y-1 border-t border-border pt-2">
@@ -1261,8 +1479,27 @@ function MessageRow({
         ) : null}
 
         {!empty && !streaming ? (
-          <div className="mt-2 flex opacity-0 transition-opacity focus-within:opacity-100 group-hover/message:opacity-100">
+          <div className="mt-2 flex flex-wrap items-center gap-1 opacity-100 sm:opacity-0 sm:transition-opacity sm:focus-within:opacity-100 sm:group-hover/message:opacity-100">
             <MessageCopyButton content={message.content} />
+            {onRegenerate && isLastAssistant ? (
+              <button
+                type="button"
+                onClick={onRegenerate}
+                aria-label="Regenerate response"
+                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <RefreshCwIcon className="size-3.5" />
+                Regenerate
+              </button>
+            ) : null}
+            {usage ? (
+              <span className="ml-1 text-[11px] text-muted-foreground">
+                {usage.promptTokens + usage.completionTokens} tokens
+                {usage.estimatedCostCents > 0
+                  ? ` · $${(usage.estimatedCostCents / 100).toFixed(4)}`
+                  : ''}
+              </span>
+            ) : null}
           </div>
         ) : null}
       </div>

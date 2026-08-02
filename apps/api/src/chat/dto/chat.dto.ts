@@ -34,3 +34,16 @@ export class SendMessageDto {
   @IsString({ each: true })
   attachmentIds?: string[];
 }
+
+export class RegenerateMessageDto {
+  @IsString()
+  conversationId!: string;
+
+  @IsString()
+  assistantMessageId!: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(SUPPORTED_MODEL_IDS)
+  model?: string;
+}

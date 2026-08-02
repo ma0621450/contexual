@@ -17,7 +17,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthUser } from '../auth/auth.types';
 import { ActiveOrg } from '../common/decorators/active-org.decorator';
 import { ChatService } from './chat.service';
-import { SendMessageDto } from './dto/chat.dto';
+import { RegenerateMessageDto, SendMessageDto } from './dto/chat.dto';
 
 @Controller('chat')
 @UseGuards(JwtAuthGuard)
@@ -93,6 +93,56 @@ export class ChatController {
           content: dto.content,
           model: dto.model,
           attachmentIds: dto.attachmentIds,
+        },
+        abortController.signal,
+      )) {
+        writeEvent(event);
+      }
+    } catch (error) {
+      if (!abortController.signal.aborted) {
+        const message = this.getStreamErrorMessage(error);
+        writeEvent({ type: 'error', message });
+      }
+    } finally {
+      req.off('aborted', abortUpstream);
+      res.off('close', abortUpstream);
+    }
+
+    if (!res.destroyed) res.end();
+  }
+
+  @Post('messages/regenerate/stream')
+  async regenerateMessage(
+    @ActiveOrg() organizationId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: RegenerateMessageDto,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const abortController = new AbortController();
+    const abortUpstream = () => abortController.abort();
+    req.once('aborted', abortUpstream);
+    res.once('close', abortUpstream);
+
+    const writeEvent = (payload: unknown) => {
+      if (!res.destroyed) {
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      }
+    };
+
+    try {
+      for await (const event of this.chatService.streamRegenerate(
+        organizationId,
+        user.id,
+        {
+          conversationId: dto.conversationId,
+          assistantMessageId: dto.assistantMessageId,
+          model: dto.model,
         },
         abortController.signal,
       )) {
