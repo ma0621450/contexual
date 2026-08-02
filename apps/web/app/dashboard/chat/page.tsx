@@ -34,7 +34,7 @@ export default async function ChatPage() {
     <ChatClient
       initialConversations={conversations}
       providerConnected={providerStatus?.connected ?? false}
-      provider={providerStatus?.provider ?? null}
+      connectedProviders={providerStatus?.providers ?? []}
       defaultModel={providerStatus?.defaultModel ?? null}
       models={models}
       initialFiles={files}

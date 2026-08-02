@@ -119,6 +119,12 @@ export type ChatStreamEvent =
         content: string;
         createdAt: string;
       };
+      usage: {
+        promptTokens: number;
+        completionTokens: number;
+        estimatedCostCents: number;
+        model: string;
+      };
     }
   | { type: 'error'; message: string };
 

@@ -5,8 +5,9 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
-    "dev": "concurrently -k -n api,worker -c cyan,magenta \"nest start --watch\" \"npm run worker:dev\"",
-    "dev:api": "nest start --watch",
+    "clean": "node -e \"const fs=require('fs'); for (const p of ['dist','tsconfig.build.tsbuildinfo','tsconfig.tsbuildinfo']) { try { fs.rmSync(p,{recursive:true,force:true}); } catch {} }\"",
+    "dev": "npm run clean && concurrently -k -n api,worker -c cyan,magenta \"nest start --watch\" \"npm run worker:dev\"",
+    "dev:api": "npm run clean && nest start --watch",
     "start": "nest start",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",

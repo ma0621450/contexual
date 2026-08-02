@@ -53,7 +53,7 @@ describe('AiProviderClient provider streams', () => {
       client.streamChatCompletion(
         AiProvider.ANTHROPIC,
         'key',
-        'claude-sonnet-4-20250514',
+        'claude-sonnet-5',
         [{ role: 'user', content: 'Hi' }],
       ),
     );
@@ -88,7 +88,7 @@ describe('AiProviderClient provider streams', () => {
       client.streamChatCompletion(
         AiProvider.GOOGLE,
         'google-key',
-        'gemini-2.0-flash',
+        'gemini-3.6-flash',
         [{ role: 'user', content: 'Hi' }],
       ),
     );
@@ -118,7 +118,7 @@ describe('AiProviderClient provider streams', () => {
         client.streamChatCompletion(
           AiProvider.ANTHROPIC,
           'key',
-          'claude-sonnet-4-20250514',
+          'claude-sonnet-5',
           [{ role: 'user', content: 'Hi' }],
         ),
       ),

@@ -171,7 +171,7 @@ describe('App (e2e)', () => {
       .send({
         provider: 'OPENAI',
         apiKey: 'test-key-never-sent',
-        defaultModel: 'gpt-4o-mini',
+        defaultModel: 'gpt-5.6-luna',
       })
       .expect(403);
 
@@ -180,7 +180,7 @@ describe('App (e2e)', () => {
       .post('/api/chat/messages/stream')
       .send({
         content: 'Use the attachment',
-        model: 'gpt-4o-mini',
+        model: 'gpt-5.6-luna',
         attachmentIds: [fileBody.id],
       })
       .expect(201);

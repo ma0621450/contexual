@@ -1,17 +1,6 @@
 import { z } from 'zod';
 
 export const aiProviderSchema = z.enum(['OPENAI', 'ANTHROPIC', 'GOOGLE', 'XAI']);
-export const aiModelSchema = z.enum([
-  'gpt-4o-mini',
-  'gpt-4o',
-  'gpt-4.1',
-  'claude-3-5-haiku-latest',
-  'claude-sonnet-4-20250514',
-  'gemini-2.0-flash',
-  'gemini-2.5-pro',
-  'grok-3-mini',
-  'grok-3',
-]);
 
 export const connectProviderSchema = z.object({
   provider: aiProviderSchema,
@@ -19,7 +8,17 @@ export const connectProviderSchema = z.object({
     .string()
     .trim()
     .min(20, 'The API key looks too short'),
-  defaultModel: aiModelSchema.optional(),
+  defaultModel: z.string().trim().min(1).optional(),
+  enabledModels: z.array(z.string().trim().min(1)).min(1).optional(),
+});
+
+export const updateProviderModelsSchema = z.object({
+  enabledModels: z.array(z.string().trim().min(1)).min(1, 'Enable at least one model'),
+  defaultModel: z.string().trim().min(1),
+}).refine((value) => value.enabledModels.includes(value.defaultModel), {
+  message: 'The default model must be one of the enabled models.',
+  path: ['defaultModel'],
 });
 
 export type ConnectProviderInput = z.infer<typeof connectProviderSchema>;
+export type UpdateProviderModelsInput = z.infer<typeof updateProviderModelsSchema>;

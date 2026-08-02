@@ -3,16 +3,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
+  ArrowDownIcon,
   CheckIcon,
+  CopyIcon,
   FileIcon,
   FolderOpenIcon,
   HardDriveIcon,
   LoaderCircleIcon,
   MessagesSquareIcon,
   PaperclipIcon,
+  PanelLeftIcon,
   PlusIcon,
   SearchIcon,
   SendIcon,
+  SparklesIcon,
   Trash2Icon,
   TriangleAlertIcon,
   UploadIcon,
@@ -28,6 +32,7 @@ import type {
 } from '@/lib/api/server';
 import { waitForFileTerminal } from '@/lib/files';
 import { cn } from '@/lib/utils';
+import { Markdown } from '@/components/chat/Markdown';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -48,15 +53,37 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
 
+const PROVIDER_LABELS: Record<string, string> = {
+  OPENAI: 'OpenAI',
+  ANTHROPIC: 'Anthropic',
+  GOOGLE: 'Google',
+  XAI: 'xAI',
+};
+
+const SUGGESTIONS = [
+  'Summarize the key points of my attached document',
+  'Draft a project update email for stakeholders',
+  'Explain this concept with a simple example',
+  'Compare the options in a table with pros and cons',
+];
+
+const MAX_ATTACHMENTS = 5;
+
 type ChatClientProps = {
   initialConversations: ConversationSummary[];
   providerConnected: boolean;
-  provider: 'OPENAI' | 'ANTHROPIC' | 'GOOGLE' | 'XAI' | null;
+  connectedProviders: Array<{
+    provider: 'OPENAI' | 'ANTHROPIC' | 'GOOGLE' | 'XAI';
+    defaultModel: string;
+    enabledModels: string[];
+  }>;
   defaultModel: string | null;
   models: ProviderModel[];
   initialFiles: StoredFile[];
@@ -81,7 +108,7 @@ let tempIdCounter = 0;
 export function ChatClient({
   initialConversations,
   providerConnected,
-  provider,
+  connectedProviders = [],
   defaultModel,
   models,
   initialFiles,
@@ -92,7 +119,35 @@ export function ChatClient({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
-  const availableModels = models.filter((item) => item.provider === provider);
+  const enabledModelIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const connection of connectedProviders ?? []) {
+      for (const modelId of connection.enabledModels ?? []) {
+        ids.add(modelId);
+      }
+    }
+    return ids;
+  }, [connectedProviders]);
+  const availableModels = useMemo(
+    () =>
+      models.filter(
+        (item) =>
+          enabledModelIds.has(item.id) &&
+          (connectedProviders ?? []).some(
+            (connection) => connection.provider === item.provider,
+          ),
+      ),
+    [models, enabledModelIds, connectedProviders],
+  );
+  const modelsByProvider = useMemo(() => {
+    const groups = new Map<string, ProviderModel[]>();
+    for (const model of availableModels) {
+      const current = groups.get(model.provider) ?? [];
+      current.push(model);
+      groups.set(model.provider, current);
+    }
+    return [...groups.entries()];
+  }, [availableModels]);
   const defaultNewChatModel =
     availableModels.find((item) => item.id === defaultModel)?.id ??
     availableModels.find((item) => item.isDefault)?.id ??
@@ -108,14 +163,21 @@ export function ChatClient({
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [sending, setSending] = useState(false);
+  const [streamingId, setStreamingId] = useState<string | null>(null);
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [archivingId, setArchivingId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
   const [error, setError] = useState('');
   const [failedMessage, setFailedMessage] = useState('');
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const uploading = pendingUploads.length > 0;
+  const activeConversation = conversations.find((item) => item.id === activeId);
+  const activeModelLabel =
+    availableModels.find((item) => item.id === model)?.label ?? 'No model';
   const conversationFiles = useMemo(() => {
     const unique = new Map<string, ChatAttachment>();
     for (const message of messages) {
@@ -135,13 +197,38 @@ export function ChatClient({
   }, [libraryFiles, librarySearch]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages]);
+    if (!atBottom) return;
+    const element = scrollRef.current;
+    element?.scrollTo({ top: element.scrollHeight });
+  }, [messages, atBottom]);
+
+  useEffect(() => {
+    const element = textareaRef.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
+  }, [input]);
+
+  function handleScroll() {
+    const element = scrollRef.current;
+    if (!element) return;
+    const distance =
+      element.scrollHeight - element.scrollTop - element.clientHeight;
+    setAtBottom(distance < 120);
+  }
+
+  function scrollToBottom() {
+    const element = scrollRef.current;
+    element?.scrollTo({ top: element.scrollHeight, behavior: 'smooth' });
+    setAtBottom(true);
+  }
 
   async function openConversation(id: string) {
     if (loadingConversation) return;
     setActiveId(id);
     setError('');
+    setSidebarOpen(false);
+    setAtBottom(true);
     setLoadingConversation(true);
     try {
       const result = await apiFetch<ConversationDetail>(
@@ -168,6 +255,8 @@ export function ChatClient({
     setAttachments([]);
     setError('');
     setFailedMessage('');
+    setSidebarOpen(false);
+    setAtBottom(true);
     setModel(defaultNewChatModel);
   }
 
@@ -185,6 +274,7 @@ export function ChatClient({
     setError('');
     setFailedMessage('');
     setSending(true);
+    setAtBottom(true);
     let outgoingContent = content;
     let outgoingAttachments = [...attachments];
 
@@ -248,6 +338,7 @@ export function ChatClient({
     };
 
     setMessages((prev) => [...prev, optimisticUser, streamingAssistant]);
+    setStreamingId(streamingAssistantId);
     setInput('');
     setAttachments([]);
 
@@ -269,8 +360,12 @@ export function ChatClient({
                     {
                       id: event.conversationId,
                       title: event.title,
-                      model: '',
-                      provider: provider ?? 'OPENAI',
+                      model: model || '',
+                      provider:
+                        availableModels.find((item) => item.id === model)
+                          ?.provider ??
+                        connectedProviders[0]?.provider ??
+                        'OPENAI',
                       updatedAt: new Date().toISOString(),
                     },
                     ...prev,
@@ -295,13 +390,27 @@ export function ChatClient({
               ),
             );
 
+            const nextModel = event.usage.model || model;
+            const nextProvider =
+              availableModels.find((item) => item.id === nextModel)?.provider ??
+              connectedProviders[0]?.provider ??
+              'OPENAI';
+
             setActiveId(event.conversationId);
+            if (
+              nextModel &&
+              availableModels.some((item) => item.id === nextModel)
+            ) {
+              setModel(nextModel);
+            }
             setConversations((prev) =>
               prev.map((item) =>
                 item.id === event.conversationId
                   ? {
                       ...item,
                       title: event.title,
+                      model: nextModel || item.model,
+                      provider: nextProvider,
                       updatedAt: new Date().toISOString(),
                     }
                   : item,
@@ -334,17 +443,18 @@ export function ChatClient({
       setInput(outgoingContent);
     } finally {
       setSending(false);
+      setStreamingId(null);
     }
   }
 
   async function uploadFiles(files: File[]) {
     const availableSlots = Math.max(
       0,
-      5 - attachments.length - pendingUploads.length,
+      MAX_ATTACHMENTS - attachments.length - pendingUploads.length,
     );
     const selected = files.slice(0, availableSlots);
     if (selected.length === 0) {
-      setError('You can attach up to 5 files to a message.');
+      setError(`You can attach up to ${MAX_ATTACHMENTS} files to a message.`);
       return;
     }
 
@@ -409,7 +519,7 @@ export function ChatClient({
                 mimeType: processed.file.mimeType,
                 sizeBytes: processed.file.sizeBytes,
               },
-            ].slice(0, 5),
+            ].slice(0, MAX_ATTACHMENTS),
           );
         } finally {
           setPendingUploads((current) =>
@@ -445,7 +555,7 @@ export function ChatClient({
     setAttachments((current) => {
       const unique = new Map(current.map((file) => [file.id, file]));
       for (const file of selected) unique.set(file.id, file);
-      return [...unique.values()].slice(0, 5);
+      return [...unique.values()].slice(0, MAX_ATTACHMENTS);
     });
     setLibraryOpen(false);
     setLibrarySearch('');
@@ -482,64 +592,97 @@ export function ChatClient({
     providerConnected &&
     model.length > 0 &&
     (input.trim().length > 0 || attachments.length > 0);
+  const attachmentsFull =
+    attachments.length + pendingUploads.length >= MAX_ATTACHMENTS;
 
-  return (
-    <div className="mx-auto flex h-[calc(100vh-4rem)] max-w-7xl gap-4 p-4">
-      <aside className="hidden w-64 shrink-0 flex-col rounded-xl border border-border bg-card md:flex">
-        <div className="p-3">
-          <Button onClick={startNewChat} className="w-full">
-            <PlusIcon />
-            New chat
-          </Button>
-        </div>
-        <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
-          {conversations.length === 0 ? (
-            <p className="px-2 py-4 text-sm text-muted-foreground">
-              No conversations yet.
-            </p>
-          ) : (
-            conversations.map((conversation) => (
-              <div
-                key={conversation.id}
+  const conversationList = (
+    <>
+      <div className="p-3">
+        <Button onClick={startNewChat} className="w-full justify-start gap-2">
+          <PlusIcon className="size-4" />
+          New chat
+        </Button>
+      </div>
+      <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
+        {conversations.length === 0 ? (
+          <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+            No conversations yet.
+          </p>
+        ) : (
+          conversations.map((conversation) => (
+            <div
+              key={conversation.id}
+              className={cn(
+                'group flex items-center gap-1 rounded-lg pr-1 transition-colors',
+                activeId === conversation.id
+                  ? 'bg-accent'
+                  : 'hover:bg-muted/70',
+              )}
+            >
+              <button
+                type="button"
+                onClick={() => openConversation(conversation.id)}
+                aria-label={conversation.title}
                 className={cn(
-                  'group flex items-center gap-1 rounded-lg pr-1 transition-colors',
+                  'min-w-0 flex-1 rounded-lg px-3 py-2 text-left transition-colors',
                   activeId === conversation.id
-                    ? 'bg-accent'
-                    : 'hover:bg-muted',
+                    ? 'text-accent-foreground'
+                    : 'text-foreground',
                 )}
               >
-                <button
-                  type="button"
-                  onClick={() => openConversation(conversation.id)}
+                <span
                   className={cn(
-                    'min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm transition-colors',
-                    activeId === conversation.id
-                      ? 'font-medium text-accent-foreground'
-                      : 'text-foreground',
+                    'block truncate text-sm',
+                    activeId === conversation.id && 'font-medium',
                   )}
                 >
                   {conversation.title}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => archiveConversation(conversation.id)}
-                  disabled={archivingId === conversation.id}
-                  aria-label={`Archive ${conversation.title}`}
-                  title="Archive conversation"
-                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-background hover:text-destructive disabled:pointer-events-none"
-                >
-                  <Trash2Icon className="size-3.5" />
-                </button>
-              </div>
-            ))
-          )}
-        </div>
+                </span>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  {formatRelativeTime(conversation.updatedAt)}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => archiveConversation(conversation.id)}
+                disabled={archivingId === conversation.id}
+                aria-label={`Archive ${conversation.title}`}
+                title="Archive conversation"
+                className="rounded-md p-1.5 text-muted-foreground opacity-0 transition hover:bg-background hover:text-destructive focus-visible:opacity-100 disabled:pointer-events-none group-hover:opacity-100"
+              >
+                <Trash2Icon className="size-3.5" />
+              </button>
+            </div>
+          ))
+        )}
+      </nav>
+    </>
+  );
+
+  return (
+    <div className="flex h-[calc(100vh-4rem)] w-full overflow-hidden">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
+        {conversationList}
       </aside>
+
+      {sidebarOpen ? (
+        <div className="fixed inset-0 z-50 flex md:hidden">
+          <button
+            type="button"
+            aria-label="Close conversation list"
+            onClick={() => setSidebarOpen(false)}
+            className="absolute inset-0 bg-foreground/25 backdrop-blur-[2px]"
+          />
+          <aside className="relative flex h-full w-72 max-w-[85%] flex-col border-r border-border bg-sidebar shadow-elevated">
+            {conversationList}
+          </aside>
+        </div>
+      ) : null}
 
       <section
         className={cn(
-          'relative flex flex-1 flex-col overflow-hidden rounded-xl border bg-card transition-colors',
-          dragActive ? 'border-primary bg-primary/5' : 'border-border',
+          'relative flex min-w-0 flex-1 flex-col transition-colors',
+          dragActive && 'bg-primary/5',
         )}
         onDragEnter={(event) => {
           event.preventDefault();
@@ -561,7 +704,7 @@ export function ChatClient({
         }}
       >
         {dragActive ? (
-          <div className="pointer-events-none absolute inset-3 z-40 flex items-center justify-center rounded-xl border-2 border-dashed border-primary bg-background/90 backdrop-blur-sm">
+          <div className="pointer-events-none absolute inset-4 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-background/90 backdrop-blur-sm">
             <div className="flex flex-col items-center gap-2 text-center">
               <span className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                 <UploadIcon className="size-6" />
@@ -573,6 +716,38 @@ export function ChatClient({
             </div>
           </div>
         ) : null}
+
+        <header className="flex items-center gap-2 border-b border-border bg-background/80 px-3 py-2.5 backdrop-blur-sm sm:px-4">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="md:hidden"
+            aria-label="Open conversation list"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <PanelLeftIcon className="size-4" />
+          </Button>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-sm font-medium">
+              {activeConversation?.title ?? 'New chat'}
+            </h1>
+            <p className="truncate text-xs text-muted-foreground">
+              {activeModelLabel}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="md:hidden"
+            aria-label="New chat"
+            onClick={startNewChat}
+          >
+            <PlusIcon className="size-4" />
+          </Button>
+        </header>
+
         {!providerConnected ? (
           <div className="flex items-center gap-2 border-b border-border bg-warning/10 px-4 py-2.5 text-sm text-warning">
             <TriangleAlertIcon className="size-4 shrink-0" />
@@ -596,10 +771,9 @@ export function ChatClient({
         {conversationFiles.length > 0 ? (
           <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
             <HardDriveIcon className="size-3.5 shrink-0" />
-            <span>
+            <span className="shrink-0">
               {conversationFiles.length}{' '}
               {conversationFiles.length === 1 ? 'file is' : 'files are'} active
-              in this conversation
             </span>
             <span className="truncate text-foreground">
               {conversationFiles.map((file) => file.filename).join(', ')}
@@ -607,230 +781,273 @@ export function ChatClient({
           </div>
         ) : null}
 
-        <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-6">
-          {messages.length === 0 && !loadingConversation ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-              <span className="flex size-12 items-center justify-center rounded-2xl bg-accent text-accent-foreground">
-                <MessagesSquareIcon className="size-6" />
-              </span>
-              <div>
-                <p className="font-medium">Start a new conversation</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Type a message below to begin chatting.
-                </p>
-              </div>
-            </div>
-          ) : (
-            messages.map((message) => (
-              <div
-                key={message.id}
-                className={cn(
-                  'flex',
-                  message.role === 'USER' ? 'justify-end' : 'justify-start',
-                )}
-              >
-                <div
-                  className={cn(
-                    'max-w-[80%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap',
-                    message.role === 'USER'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-foreground',
-                  )}
-                >
-                  {message.content ||
-                    (sending && message.role === 'ASSISTANT' ? (
-                      <span className="inline-flex gap-1">
-                        <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
-                        <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
-                        <span className="size-1.5 animate-bounce rounded-full bg-current" />
-                      </span>
-                    ) : (
-                      ''
-                    ))}
-                  {message.attachments?.length ? (
-                    <div className="mt-2 space-y-1 border-t border-current/20 pt-2">
-                      {message.attachments.map((file) => (
-                        <a
-                          key={file.id}
-                          href={`/api/files/${file.id}/download`}
-                          className="block text-xs underline"
-                        >
-                          {file.filename}
-                        </a>
-                      ))}
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto scroll-smooth"
+        >
+          <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
+            {loadingConversation && messages.length === 0 ? (
+              <div className="space-y-6">
+                {[0, 1, 2].map((row) => (
+                  <div key={row} className="flex gap-3">
+                    <div className="size-8 shrink-0 animate-pulse rounded-full bg-muted" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-3 w-1/3 animate-pulse rounded bg-muted" />
+                      <div className="h-3 w-4/5 animate-pulse rounded bg-muted" />
+                      <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
                     </div>
-                  ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="flex min-h-[50vh] flex-col items-center justify-center gap-5 text-center">
+                <span className="flex size-14 items-center justify-center rounded-2xl bg-accent text-accent-foreground">
+                  <MessagesSquareIcon className="size-7" />
+                </span>
+                <div>
+                  <p className="text-lg font-semibold">
+                    How can I help you today?
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Ask a question, or attach a file to chat about it.
+                  </p>
+                </div>
+                <div className="grid w-full max-w-xl gap-2 sm:grid-cols-2">
+                  {SUGGESTIONS.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      onClick={() => {
+                        setInput(suggestion);
+                        textareaRef.current?.focus();
+                      }}
+                      disabled={!providerConnected}
+                      className="rounded-xl border border-border bg-card px-3.5 py-3 text-left text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-60"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
                 </div>
               </div>
-            ))
-          )}
+            ) : (
+              <div className="space-y-6">
+                {messages.map((message) => (
+                  <MessageRow
+                    key={message.id}
+                    message={message}
+                    streaming={streamingId === message.id}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
-        {error ? (
-          <div className="mx-6 mb-2 flex items-center justify-between gap-3 rounded-lg border border-destructive/25 bg-destructive/8 px-3 py-2 text-sm text-destructive">
-            <p>{error}</p>
-            {failedMessage ? (
-              <button
-                type="button"
-                onClick={() => sendMessage(failedMessage)}
-                disabled={sending}
-                className="shrink-0 font-medium underline underline-offset-2"
-              >
-                Retry
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-
-        {attachments.length || pendingUploads.length ? (
-          <div className="flex flex-wrap gap-2 border-t border-border px-4 pt-3">
-            {attachments.map((file) => (
-              <div
-                key={file.id}
-                className="group flex min-w-0 max-w-64 items-center gap-2 rounded-lg border border-border bg-muted/50 px-2.5 py-2"
-              >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                  <FileIcon className="size-4" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-medium">
-                    {file.filename}
-                  </span>
-                  <span className="block text-[11px] text-muted-foreground">
-                    {formatFileSize(file.sizeBytes)} · Ready
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setAttachments((previous) =>
-                      previous.filter((item) => item.id !== file.id),
-                    )
-                  }
-                  className="rounded p-1 text-muted-foreground transition hover:bg-background hover:text-foreground"
-                  title="Remove attachment"
-                  aria-label={`Remove ${file.filename}`}
-                >
-                  <XIcon className="size-3.5" />
-                </button>
-              </div>
-            ))}
-            {pendingUploads.map((file) => (
-              <div
-                key={file.key}
-                className="flex min-w-0 max-w-64 items-center gap-2 rounded-lg border border-border bg-muted/50 px-2.5 py-2"
-              >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                  <LoaderCircleIcon className="size-4 animate-spin" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-medium">
-                    {file.filename}
-                  </span>
-                  <span className="block text-[11px] text-muted-foreground">
-                    {file.stage === 'uploading'
-                      ? 'Uploading…'
-                      : 'Scanning and processing…'}
-                  </span>
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        <form
-          onSubmit={handleSend}
-          className="flex items-end gap-2 border-t border-border p-4"
-        >
-          <Select
-            value={model}
-            onValueChange={setModel}
-            disabled={sending || activeId !== null}
+        {!atBottom && messages.length > 0 ? (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            aria-label="Scroll to latest message"
+            className="absolute bottom-36 left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-elevated transition-colors hover:text-foreground"
           >
-            <SelectTrigger
-              size="sm"
-              className="w-38 shrink-0"
-              aria-label="Chat model"
+            <ArrowDownIcon className="size-4" />
+          </button>
+        ) : null}
+
+        <div className="border-t border-border bg-background/80 backdrop-blur-sm">
+          <div className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6 sm:py-4">
+            {error ? (
+              <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                <p>{error}</p>
+                {failedMessage ? (
+                  <button
+                    type="button"
+                    onClick={() => sendMessage(failedMessage)}
+                    disabled={sending}
+                    className="shrink-0 font-medium underline underline-offset-2"
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+            <form
+              onSubmit={handleSend}
+              className="rounded-2xl border border-border bg-card shadow-card transition-colors focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-ring/20"
             >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {availableModels.map((item) => (
-                <SelectItem key={item.id} value={item.id}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              {attachments.length || pendingUploads.length ? (
+                <div className="flex flex-wrap gap-2 border-b border-border p-3">
+                  {attachments.map((file) => (
+                    <div
+                      key={file.id}
+                      className="flex min-w-0 max-w-64 items-center gap-2 rounded-lg border border-border bg-muted/50 px-2.5 py-2"
+                    >
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        <FileIcon className="size-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-medium">
+                          {file.filename}
+                        </span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {formatFileSize(file.sizeBytes)} · Ready
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAttachments((previous) =>
+                            previous.filter((item) => item.id !== file.id),
+                          )
+                        }
+                        className="rounded p-1 text-muted-foreground transition hover:bg-background hover:text-foreground"
+                        title="Remove attachment"
+                        aria-label={`Remove ${file.filename}`}
+                      >
+                        <XIcon className="size-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  {pendingUploads.map((file) => (
+                    <div
+                      key={file.key}
+                      className="flex min-w-0 max-w-64 items-center gap-2 rounded-lg border border-border bg-muted/50 px-2.5 py-2"
+                    >
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        <LoaderCircleIcon className="size-4 animate-spin" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-medium">
+                          {file.filename}
+                        </span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {file.stage === 'uploading'
+                            ? 'Uploading…'
+                            : 'Scanning and processing…'}
+                        </span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                disabled={
-                  sending ||
-                  attachments.length + pendingUploads.length >= 5
-                }
-                title="Add files"
-              >
-                <PaperclipIcon />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" side="top" className="w-52">
-              <DropdownMenuItem
-                onSelect={() => fileInputRef.current?.click()}
-              >
-                <UploadIcon />
-                Upload from device
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => void openLibrary()}>
-                <FolderOpenIcon />
-                Choose from Files
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".txt,.md,.csv,.json,.pdf,.docx,text/plain,text/markdown,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            disabled={
-              sending || attachments.length + pendingUploads.length >= 5
-            }
-            onChange={(event) => {
-              void uploadFiles(Array.from(event.target.files ?? []));
-              event.target.value = '';
-            }}
-            className="sr-only"
-          />
+              <Textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    void handleSend(event);
+                  }
+                }}
+                onPaste={(event) => {
+                  const files = Array.from(event.clipboardData.files);
+                  if (files.length > 0) {
+                    event.preventDefault();
+                    void uploadFiles(files);
+                  }
+                }}
+                rows={1}
+                placeholder="Message Contexual…"
+                aria-label="Message"
+                className="max-h-50 min-h-11 resize-none rounded-none border-0 bg-transparent px-4 py-3 shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+                disabled={sending || !providerConnected}
+              />
 
-          <Textarea
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                void handleSend(event);
-              }
-            }}
-            onPaste={(event) => {
-              const files = Array.from(event.clipboardData.files);
-              if (files.length > 0) {
-                event.preventDefault();
-                void uploadFiles(files);
-              }
-            }}
-            rows={1}
-            placeholder="Type a message…"
-            className="max-h-40 min-h-9 flex-1"
-            disabled={sending || !providerConnected}
-          />
-          <Button type="submit" size="icon" disabled={!canSend}>
-            <SendIcon />
-          </Button>
-        </form>
+              <div className="flex items-center gap-2 px-2.5 pb-2.5">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0"
+                      disabled={sending || attachmentsFull}
+                      title="Add files"
+                      aria-label="Add files"
+                    >
+                      <PaperclipIcon className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" side="top" className="w-52">
+                    <DropdownMenuItem
+                      onSelect={() => fileInputRef.current?.click()}
+                    >
+                      <UploadIcon />
+                      Upload from device
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => void openLibrary()}>
+                      <FolderOpenIcon />
+                      Choose from Files
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".txt,.md,.csv,.json,.pdf,.docx,text/plain,text/markdown,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  disabled={sending || attachmentsFull}
+                  onChange={(event) => {
+                    void uploadFiles(Array.from(event.target.files ?? []));
+                    event.target.value = '';
+                  }}
+                  className="sr-only"
+                />
+
+                <Select
+                  value={model}
+                  onValueChange={setModel}
+                  disabled={sending || availableModels.length === 0}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-36 shrink-0 border-0 bg-muted/60 shadow-none sm:w-48 dark:bg-muted/60"
+                    aria-label="Chat model"
+                  >
+                    <SelectValue placeholder="Select model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {modelsByProvider.map(([providerId, providerModels]) => (
+                      <SelectGroup key={providerId}>
+                        <SelectLabel>
+                          {PROVIDER_LABELS[providerId] ?? providerId}
+                        </SelectLabel>
+                        {providerModels.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.label}
+                            {item.isDefault ? ' ★' : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <span className="ml-auto hidden text-[11px] text-muted-foreground sm:block">
+                  Enter to send · Shift+Enter for a new line
+                </span>
+
+                <Button
+                  type="submit"
+                  size="icon"
+                  className="shrink-0 rounded-full"
+                  disabled={!canSend}
+                  aria-label="Send message"
+                >
+                  {sending ? (
+                    <LoaderCircleIcon className="size-4 animate-spin" />
+                  ) : (
+                    <SendIcon className="size-4" />
+                  )}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
       </section>
 
       <Dialog
@@ -884,7 +1101,8 @@ export function ChatClient({
                   (attachment) => attachment.id === file.id,
                 );
                 const selectionFull =
-                  attachments.length + selectedLibraryIds.length >= 5;
+                  attachments.length + selectedLibraryIds.length >=
+                  MAX_ATTACHMENTS;
                 return (
                   <button
                     key={file.id}
@@ -967,6 +1185,137 @@ export function ChatClient({
       </Dialog>
     </div>
   );
+}
+
+function MessageRow({
+  message,
+  streaming,
+}: {
+  message: ChatMessage;
+  streaming: boolean;
+}) {
+  const isUser = message.role === 'USER';
+
+  if (isUser) {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] min-w-0 space-y-2 rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-primary-foreground sm:max-w-[75%]">
+          <p className="text-[0.9375rem] leading-7 whitespace-pre-wrap">
+            {message.content}
+          </p>
+          {message.attachments?.length ? (
+            <div className="space-y-1 border-t border-primary-foreground/25 pt-2">
+              {message.attachments.map((file) => (
+                <a
+                  key={file.id}
+                  href={`/api/files/${file.id}/download`}
+                  className="flex items-center gap-1.5 text-xs underline underline-offset-2"
+                >
+                  <FileIcon className="size-3.5 shrink-0" />
+                  <span className="truncate">{file.filename}</span>
+                </a>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  const empty = message.content.length === 0;
+
+  return (
+    <div className="group/message flex gap-3">
+      <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-card text-primary">
+        <SparklesIcon className="size-4" />
+      </span>
+      <div className="min-w-0 flex-1">
+        {empty ? (
+          <div className="flex h-8 items-center gap-1.5 text-muted-foreground">
+            <span className="size-2 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
+            <span className="size-2 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
+            <span className="size-2 animate-bounce rounded-full bg-current" />
+          </div>
+        ) : (
+          <>
+            <Markdown content={message.content} />
+            {streaming ? (
+              <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-foreground align-text-bottom" />
+            ) : null}
+          </>
+        )}
+
+        {message.attachments?.length ? (
+          <div className="mt-3 space-y-1 border-t border-border pt-2">
+            {message.attachments.map((file) => (
+              <a
+                key={file.id}
+                href={`/api/files/${file.id}/download`}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                <FileIcon className="size-3.5 shrink-0" />
+                <span className="truncate">{file.filename}</span>
+              </a>
+            ))}
+          </div>
+        ) : null}
+
+        {!empty && !streaming ? (
+          <div className="mt-2 flex opacity-0 transition-opacity focus-within:opacity-100 group-hover/message:opacity-100">
+            <MessageCopyButton content={message.content} />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function MessageCopyButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      aria-label={copied ? 'Response copied' : 'Copy response'}
+      className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+    >
+      {copied ? (
+        <CheckIcon className="size-3.5 text-success" />
+      ) : (
+        <CopyIcon className="size-3.5" />
+      )}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+}
+
+function formatRelativeTime(value: string): string {
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return '';
+
+  const seconds = Math.round((Date.now() - timestamp) / 1000);
+  if (seconds < 60) return 'Just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  });
 }
 
 function formatFileSize(bytes: number): string {

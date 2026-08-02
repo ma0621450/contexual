@@ -7,55 +7,92 @@ export type ModelCatalogEntry = {
   inputCentsPerMillion: number;
   outputCentsPerMillion: number;
   contextWindow: number;
+  recommended?: boolean;
 };
 
+/**
+ * Curated chat models. IDs/pricing last verified against provider docs (Aug 2026).
+ * Keep this list short and GA-only — preview/invite-only models stay out.
+ */
 export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
+  // OpenAI — https://developers.openai.com/api/docs/models
   {
-    id: 'gpt-4o-mini',
+    id: 'gpt-5.6-luna',
     provider: AiProvider.OPENAI,
-    label: 'GPT-4o mini',
-    inputCentsPerMillion: 15,
-    outputCentsPerMillion: 60,
-    contextWindow: 128_000,
+    label: 'GPT-5.6 Luna',
+    inputCentsPerMillion: 20,
+    outputCentsPerMillion: 120,
+    contextWindow: 1_050_000,
+    recommended: true,
   },
   {
-    id: 'gpt-4o',
+    id: 'gpt-5.6-terra',
     provider: AiProvider.OPENAI,
-    label: 'GPT-4o',
-    inputCentsPerMillion: 250,
-    outputCentsPerMillion: 1000,
-    contextWindow: 128_000,
-  },
-  {
-    id: 'gpt-4.1',
-    provider: AiProvider.OPENAI,
-    label: 'GPT-4.1',
+    label: 'GPT-5.6 Terra',
     inputCentsPerMillion: 200,
-    outputCentsPerMillion: 800,
+    outputCentsPerMillion: 1200,
+    contextWindow: 1_050_000,
+  },
+  {
+    id: 'gpt-5.6-sol',
+    provider: AiProvider.OPENAI,
+    label: 'GPT-5.6 Sol',
+    inputCentsPerMillion: 500,
+    outputCentsPerMillion: 3000,
+    contextWindow: 1_050_000,
+  },
+
+  // Anthropic — https://docs.anthropic.com/en/docs/about-claude/models/overview
+  {
+    id: 'claude-sonnet-5',
+    provider: AiProvider.ANTHROPIC,
+    label: 'Claude Sonnet 5',
+    inputCentsPerMillion: 300,
+    outputCentsPerMillion: 1500,
+    contextWindow: 1_000_000,
+    recommended: true,
+  },
+  {
+    id: 'claude-haiku-4-5',
+    provider: AiProvider.ANTHROPIC,
+    label: 'Claude Haiku 4.5',
+    inputCentsPerMillion: 100,
+    outputCentsPerMillion: 500,
+    contextWindow: 200_000,
+  },
+  {
+    id: 'claude-opus-5',
+    provider: AiProvider.ANTHROPIC,
+    label: 'Claude Opus 5',
+    inputCentsPerMillion: 500,
+    outputCentsPerMillion: 2500,
     contextWindow: 1_000_000,
   },
   {
-    id: 'claude-3-5-haiku-latest',
+    id: 'claude-fable-5',
     provider: AiProvider.ANTHROPIC,
-    label: 'Claude 3.5 Haiku',
-    inputCentsPerMillion: 80,
-    outputCentsPerMillion: 400,
-    contextWindow: 200_000,
+    label: 'Claude Fable 5',
+    inputCentsPerMillion: 1000,
+    outputCentsPerMillion: 5000,
+    contextWindow: 1_000_000,
   },
+
+  // Google — https://ai.google.dev/gemini-api/docs/pricing
   {
-    id: 'claude-sonnet-4-20250514',
-    provider: AiProvider.ANTHROPIC,
-    label: 'Claude Sonnet 4',
-    inputCentsPerMillion: 300,
-    outputCentsPerMillion: 1500,
-    contextWindow: 200_000,
-  },
-  {
-    id: 'gemini-2.0-flash',
+    id: 'gemini-3.5-flash-lite',
     provider: AiProvider.GOOGLE,
-    label: 'Gemini 2.0 Flash',
-    inputCentsPerMillion: 10,
-    outputCentsPerMillion: 40,
+    label: 'Gemini 3.5 Flash-Lite',
+    inputCentsPerMillion: 30,
+    outputCentsPerMillion: 250,
+    contextWindow: 1_000_000,
+    recommended: true,
+  },
+  {
+    id: 'gemini-3.6-flash',
+    provider: AiProvider.GOOGLE,
+    label: 'Gemini 3.6 Flash',
+    inputCentsPerMillion: 150,
+    outputCentsPerMillion: 750,
     contextWindow: 1_000_000,
   },
   {
@@ -66,21 +103,32 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     outputCentsPerMillion: 1000,
     contextWindow: 1_000_000,
   },
+
+  // xAI — https://docs.x.ai/developers/models
   {
-    id: 'grok-3-mini',
+    id: 'grok-4.3',
     provider: AiProvider.XAI,
-    label: 'Grok 3 mini',
-    inputCentsPerMillion: 30,
-    outputCentsPerMillion: 50,
-    contextWindow: 131_072,
+    label: 'Grok 4.3',
+    inputCentsPerMillion: 125,
+    outputCentsPerMillion: 250,
+    contextWindow: 1_000_000,
+    recommended: true,
   },
   {
-    id: 'grok-3',
+    id: 'grok-4.5',
     provider: AiProvider.XAI,
-    label: 'Grok 3',
-    inputCentsPerMillion: 300,
-    outputCentsPerMillion: 1500,
-    contextWindow: 131_072,
+    label: 'Grok 4.5',
+    inputCentsPerMillion: 200,
+    outputCentsPerMillion: 600,
+    contextWindow: 500_000,
+  },
+  {
+    id: 'grok-build-0.1',
+    provider: AiProvider.XAI,
+    label: 'Grok Build 0.1',
+    inputCentsPerMillion: 100,
+    outputCentsPerMillion: 200,
+    contextWindow: 256_000,
   },
 ] as const;
 
@@ -91,7 +139,9 @@ export function getModelsForProvider(provider: AiProvider) {
 }
 
 export function getDefaultModel(provider: AiProvider): string {
-  const model = getModelsForProvider(provider)[0];
+  const models = getModelsForProvider(provider);
+  const recommended = models.find((model) => model.recommended);
+  const model = recommended ?? models[0];
   if (!model) throw new Error(`No models configured for ${provider}`);
   return model.id;
 }
@@ -105,4 +155,8 @@ export function isModelForProvider(
   provider: AiProvider,
 ): boolean {
   return getModel(modelId)?.provider === provider;
+}
+
+export function getProviderForModel(modelId: string): AiProvider | undefined {
+  return getModel(modelId)?.provider;
 }

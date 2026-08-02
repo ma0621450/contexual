@@ -56,6 +56,7 @@ describe('ChatService streaming lifecycle', () => {
       updateMany: jest.fn(),
     },
     conversation: {
+      findUnique: jest.fn(),
       create: jest
         .fn()
         .mockResolvedValue({ id: 'conversation-1', title: 'Hello' }),
@@ -66,10 +67,11 @@ describe('ChatService streaming lifecycle', () => {
     ),
   };
   const providers = {
-    getDecryptedKey: jest.fn().mockResolvedValue({
+    resolveChatCredentials: jest.fn().mockResolvedValue({
       provider: AiProvider.OPENAI,
       apiKey: 'test-key',
-      defaultModel: 'gpt-4o-mini',
+      defaultModel: 'gpt-5.6-luna',
+      model: 'gpt-5.6-luna',
     }),
   };
   const aiProvider = { streamChatCompletion: jest.fn() };
@@ -101,6 +103,12 @@ describe('ChatService streaming lifecycle', () => {
     prisma.message.findMany.mockResolvedValue([]);
     files.getAttachments.mockResolvedValue([]);
     reservations.reserve.mockResolvedValue({ id: 'reservation-1' });
+    providers.resolveChatCredentials.mockResolvedValue({
+      provider: AiProvider.OPENAI,
+      apiKey: 'test-key',
+      defaultModel: 'gpt-5.6-luna',
+      model: 'gpt-5.6-luna',
+    });
     tx.message.create
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce(assistant);
@@ -187,7 +195,7 @@ describe('ChatService streaming lifecycle', () => {
     expect(aiProvider.streamChatCompletion).toHaveBeenCalledWith(
       AiProvider.OPENAI,
       'test-key',
-      'gpt-4o-mini',
+      'gpt-5.6-luna',
       expect.arrayContaining([
         expect.objectContaining({
           role: 'user',
@@ -198,5 +206,78 @@ describe('ChatService streaming lifecycle', () => {
       ]),
       undefined,
     );
+  });
+
+  it('switches model mid-conversation and persists provider/model with full history', async () => {
+    prisma.conversation.findUnique.mockResolvedValue({
+      id: 'conversation-1',
+      title: 'Prior chat',
+      organizationId: 'org-1',
+      userId: 'user-1',
+      isArchived: false,
+    });
+    prisma.message.findMany.mockResolvedValue([
+      {
+        role: MessageRole.USER,
+        content: 'Started on OpenAI',
+        attachments: [],
+      },
+      {
+        role: MessageRole.ASSISTANT,
+        content: 'Continuing.',
+        attachments: [],
+      },
+    ]);
+    providers.resolveChatCredentials.mockResolvedValue({
+      provider: AiProvider.ANTHROPIC,
+      apiKey: 'anthropic-key',
+      defaultModel: 'claude-sonnet-5',
+      model: 'claude-sonnet-5',
+    });
+    aiProvider.streamChatCompletion.mockImplementation(async function* () {
+      await Promise.resolve();
+      yield { kind: 'delta', content: 'Switched' };
+      yield { kind: 'usage', promptTokens: 8, completionTokens: 1 };
+    });
+
+    await collect(
+      service.streamMessage('org-1', 'user-1', {
+        conversationId: 'conversation-1',
+        content: 'Continue with Claude',
+        model: 'claude-sonnet-5',
+      }),
+    );
+
+    expect(providers.resolveChatCredentials).toHaveBeenCalledWith(
+      'org-1',
+      'claude-sonnet-5',
+    );
+    expect(aiProvider.streamChatCompletion).toHaveBeenCalledWith(
+      AiProvider.ANTHROPIC,
+      'anthropic-key',
+      'claude-sonnet-5',
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: 'Started on OpenAI',
+        }),
+        expect.objectContaining({
+          role: 'assistant',
+          content: 'Continuing.',
+        }),
+        expect.objectContaining({
+          role: 'user',
+          content: 'Continue with Claude',
+        }),
+      ]),
+      undefined,
+    );
+    expect(tx.conversation.update).toHaveBeenCalledWith({
+      where: { id: 'conversation-1' },
+      data: expect.objectContaining({
+        model: 'claude-sonnet-5',
+        provider: AiProvider.ANTHROPIC,
+      }),
+    });
   });
 });

@@ -62,8 +62,17 @@ export type OrganizationMembership = {
 
 export type AiProviderId = 'OPENAI' | 'ANTHROPIC' | 'GOOGLE' | 'XAI';
 
+export type ConnectedProvider = {
+  provider: AiProviderId;
+  defaultModel: string;
+  enabledModels: string[];
+  connectedAt: string;
+  connectedByName: string | null;
+};
+
 export type ProviderStatus = {
   connected: boolean;
+  providers: ConnectedProvider[];
   provider: AiProviderId | null;
   defaultModel: string | null;
   connectedAt: string | null;

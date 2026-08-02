@@ -98,7 +98,7 @@ model User {
   auditLogs       AuditLog[]       @relation("AuditActor")
   sentInvites     Invite[]         @relation("InviteSender")
   refreshTokens   RefreshToken[]
-  organizationsApiKeyAdded Organization[]
+  connectedProviders OrganizationProvider[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -119,14 +119,6 @@ model Organization {
   monthlyTokensUsed      Int  @default(0)
   usagePeriodStartedAt   DateTime @default(now())
 
-  apiKeyCiphertext String?
-  apiKeyIv         String?
-  apiKeyProvider   AiProvider?
-  defaultModel     String?
-  apiKeyAddedAt    DateTime?
-  apiKeyAddedById  String?
-  apiKeyAddedBy    User?    @relation(fields: [apiKeyAddedById], references: [id], onDelete: SetNull)
-
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
   subscriptionStatus   String?
@@ -142,6 +134,7 @@ model Organization {
   usageLogs     UsageLog[]
   usageReservations UsageReservation[]
   fileProcessingJobs FileProcessingJob[]
+  providers     OrganizationProvider[]
 
   storageBytesUsed BigInt @default(0)
   storedFileCount  Int    @default(0)
@@ -150,6 +143,29 @@ model Organization {
   updatedAt DateTime @updatedAt
 
   @@index([slug])
+}
+
+model OrganizationProvider {
+  id               String     @id @default(cuid())
+  organizationId   String
+  provider         AiProvider
+  apiKeyCiphertext String
+  apiKeyIv         String
+  defaultModel     String
+  /// Model IDs from the curated catalog that members may use for this provider.
+  enabledModels    String[]   @default([])
+  connectedById    String?
+  connectedAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectedBy  User?        @relation(fields: [connectedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, provider])
+  @@index([organizationId])
+  @@index([connectedById])
 }
 
 model Membership {
