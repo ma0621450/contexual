@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { DashboardShell } from '@/components/dashboard/DashboardShell';
+import { ImpersonationBanner } from '@/components/dashboard/ImpersonationBanner';
 import { SuspendedAccess } from '@/components/dashboard/SuspendedAccess';
 import { getCurrentUser, getOrganizations } from '@/lib/api/server';
 
@@ -37,13 +38,16 @@ export default async function DashboardLayout({
   }
 
   return (
-    <DashboardShell
-      isAdmin={user.role === 'ADMIN'}
-      user={{ name: user.name, email: user.email, role: user.role }}
-      organizations={organizations}
-      activeOrganizationId={user.activeOrganizationId}
-    >
-      {children}
-    </DashboardShell>
+    <>
+      {user.isImpersonated ? <ImpersonationBanner /> : null}
+      <DashboardShell
+        isAdmin={user.role === 'ADMIN'}
+        user={{ name: user.name, email: user.email, role: user.role }}
+        organizations={organizations}
+        activeOrganizationId={user.activeOrganizationId}
+      >
+        {children}
+      </DashboardShell>
+    </>
   );
 }

@@ -201,7 +201,7 @@ describe('ChatService streaming lifecycle', () => {
           role: 'user',
           content: expect.stringContaining(
             '<attachment filename="strategy.pdf">',
-          ),
+          ) as string,
         }),
       ]),
       undefined,
@@ -277,7 +277,7 @@ describe('ChatService streaming lifecycle', () => {
       data: expect.objectContaining({
         model: 'claude-sonnet-5',
         provider: AiProvider.ANTHROPIC,
-      }),
+      }) as object,
     });
   });
 });

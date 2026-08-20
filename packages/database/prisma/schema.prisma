@@ -11,6 +11,13 @@ enum MembershipRole {
   MEMBER
 }
 
+/// Platform staff access, entirely separate from tenant membership roles.
+enum PlatformRole {
+  SUPPORT
+  OPERATOR
+  OWNER
+}
+
 enum PlanTier {
   FREE
   STARTER
@@ -99,6 +106,7 @@ model User {
   sentInvites     Invite[]         @relation("InviteSender")
   refreshTokens   RefreshToken[]
   connectedProviders OrganizationProvider[]
+  impersonations  ImpersonationGrant[] @relation("ImpersonationTarget")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -135,6 +143,7 @@ model Organization {
   usageReservations UsageReservation[]
   fileProcessingJobs FileProcessingJob[]
   providers     OrganizationProvider[]
+  impersonationGrants ImpersonationGrant[]
 
   storageBytesUsed BigInt @default(0)
   storedFileCount  Int    @default(0)
@@ -412,6 +421,89 @@ model RefreshToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+/// Platform staff, with credentials of their own and no relation to User. A
+/// customer-facing flow such as password reset must never be able to reach a
+/// staff credential, and staff must not appear in tenant-facing tables.
+///
+/// One row per person: PlatformAuditLog and ImpersonationGrant attribute every
+/// action to a specific admin, which is meaningless if logins are shared.
+model PlatformAdmin {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String
+  passwordHash String
+  role         PlatformRole @default(SUPPORT)
+
+  /// Set on seeded or reset accounts. Blocks every platform route except the
+  /// rotation endpoint until a new password is chosen.
+  mustChangePassword Boolean @default(false)
+
+  /// Reserved for a future identity provider. Nothing writes it yet; it exists
+  /// so adopting SSO does not require another migration on this table.
+  ssoSubject String? @unique
+
+  totpSecretCiphertext String?
+  totpSecretIv         String?
+  totpConfirmedAt      DateTime?
+
+  lastLoginAt DateTime?
+  disabledAt  DateTime?
+
+  auditLogs           PlatformAuditLog[]
+  impersonationGrants ImpersonationGrant[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Staff actions across the whole platform. Kept apart from the per-tenant
+/// AuditLog, whose organizationId is required and whose feed customers read.
+model PlatformAuditLog {
+  id              String  @id @default(cuid())
+  platformAdminId String?
+
+  action     String
+  targetType String?
+  targetId   String?
+  details    Json?
+  ipAddress  String?
+
+  platformAdmin PlatformAdmin? @relation(fields: [platformAdminId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([platformAdminId, createdAt])
+  @@index([targetType, targetId, createdAt])
+}
+
+model ImpersonationGrant {
+  id                   String @id @default(cuid())
+  platformAdminId      String
+  targetUserId         String
+  targetOrganizationId String
+
+  reason String @db.Text
+
+  /// Single-use handoff token that exchanges platform auth for a scoped
+  /// application session on the customer-facing origin.
+  redeemTokenHash String    @unique
+  redeemedAt      DateTime?
+  expiresAt       DateTime
+  endsAt          DateTime
+  endedAt         DateTime?
+
+  platformAdmin      PlatformAdmin @relation(fields: [platformAdminId], references: [id], onDelete: Cascade)
+  targetUser         User          @relation("ImpersonationTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  targetOrganization Organization  @relation(fields: [targetOrganizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([platformAdminId, createdAt])
+  @@index([targetUserId, createdAt])
+  @@index([targetOrganizationId, createdAt])
 }
 
 model StripeEvent {

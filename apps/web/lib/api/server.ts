@@ -19,6 +19,7 @@ export type CurrentUser = {
     role: OrganizationRole;
     suspended: boolean;
   }[];
+  isImpersonated?: boolean;
 };
 
 export type TeamMember = {

@@ -29,4 +29,20 @@ export class PrismaService
       return operation(tx);
     });
   }
+
+  /**
+   * Grants platform staff cross-tenant visibility of RLS-protected tables. The
+   * matching policies are SELECT-only, so this cannot be used to mutate tenant
+   * rows.
+   */
+  withPlatformRead<T>(
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return this.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        SELECT set_config('app.platform_admin', 'true', true)
+      `;
+      return operation(tx);
+    });
+  }
 }

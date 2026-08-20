@@ -7,6 +7,7 @@ import {
   REFRESH_TOKEN_COOKIE,
   type AccessTokenPayload,
   type AuthUser,
+  type ImpersonationClaim,
 } from './auth.types';
 
 @Injectable()
@@ -63,6 +64,29 @@ export class AuthCookieService {
     });
   }
 
+  /**
+   * Impersonation sessions are access-token only and expire with the grant, so
+   * they cannot be refreshed into a longer-lived session.
+   */
+  signImpersonationToken(
+    user: AuthUser,
+    impersonation: ImpersonationClaim,
+    expiresInSeconds: number,
+  ): string {
+    const payload: AccessTokenPayload = {
+      sub: user.id,
+      email: user.email,
+      emailVerified: user.emailVerifiedAt !== null,
+      hasMembership: user.memberships.some(
+        (membership) => !membership.suspended,
+      ),
+      sessionVersion: user.sessionVersion,
+      impersonation,
+    };
+
+    return this.jwtService.sign(payload, { expiresIn: expiresInSeconds });
+  }
+
   setAuthCookies(res: Response, accessToken: string, refreshToken: string) {
     const refreshDays = Number(
       this.configService.get<string>('REFRESH_TOKEN_EXPIRY_DAYS') ?? 30,
@@ -80,8 +104,11 @@ export class AuthCookieService {
     });
   }
 
-  setAccessCookie(res: Response, accessToken: string) {
-    const accessTokenExpirySeconds = this.getAccessTokenExpirySeconds();
+  setAccessCookie(
+    res: Response,
+    accessToken: string,
+    maxAgeSeconds = this.getAccessTokenExpirySeconds(),
+  ) {
     const isProduction = process.env.NODE_ENV === 'production';
 
     res.cookie(ACCESS_TOKEN_COOKIE, accessToken, {
@@ -89,12 +116,16 @@ export class AuthCookieService {
       secure: isProduction,
       sameSite: 'lax',
       path: '/',
-      maxAge: accessTokenExpirySeconds * 1000,
+      maxAge: maxAgeSeconds * 1000,
     });
   }
 
   clearAuthCookies(res: Response) {
     res.clearCookie(ACCESS_TOKEN_COOKIE, { path: '/' });
+    this.clearRefreshCookie(res);
+  }
+
+  clearRefreshCookie(res: Response) {
     res.clearCookie(REFRESH_TOKEN_COOKIE, { path: '/' });
   }
 

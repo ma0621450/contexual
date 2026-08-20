@@ -4,7 +4,9 @@ Contexual is a team AI workspace in an npm/Turborepo monorepo:
 
 - `apps/web` — Next.js web client (port 3000)
 - `apps/api` — NestJS API (port 3001)
+- `apps/admin` — Next.js platform admin console (port 3002)
 - `packages/database` — Prisma schema, migrations, and PostgreSQL client
+- `packages/ui` — design tokens and shared UI primitives
 - `file-worker` — separate asynchronous malware-scan and extraction process
 
 ## Implemented behavior
@@ -29,6 +31,55 @@ Contexual is a team AI workspace in an npm/Turborepo monorepo:
   `/api/health/ready` verifies PostgreSQL, ClamAV, and storage.
 - Transactional email is persisted in a PostgreSQL outbox and delivered by the
   worker process's retrying outbox processor.
+- Platform staff sign in to `apps/admin` with credentials that have no
+  relationship to customer accounts, and hold a session that is separate from
+  customer sessions: a distinct cookie, a signing key derived from `JWT_SECRET`,
+  and a SELECT-only row-level security policy for cross-tenant reads. Roles are
+  `SUPPORT`, `OPERATOR`, and `OWNER`.
+
+## Platform administration
+
+`PlatformAdmin` is a standalone table with its own email, password, and TOTP
+secret. It has no foreign key to `User`, so no customer-facing flow — password
+reset in particular — can reach a staff credential, and staff never appear in
+tenant-facing tables.
+
+Seed the first `OWNER` once, on a fresh installation:
+
+```bash
+PLATFORM_SEED_EMAIL=owner@example.com npm run platform:seed --workspace @repo/api
+```
+
+The command is idempotent and does nothing once any admin exists. It prints a
+generated temporary password unless `PLATFORM_SEED_PASSWORD` is set, which is
+required in production.
+
+Every subsequent admin is created per-person, because `PlatformAuditLog` and
+`ImpersonationGrant` attribute actions to an individual and a shared login would
+make that attribution worthless:
+
+```bash
+npm run platform:grant --workspace @repo/api -- someone@example.com --name "Ayesha" --role OPERATOR
+npm run platform:grant --workspace @repo/api -- someone@example.com --reset-password
+npm run platform:grant --workspace @repo/api -- someone@example.com --revoke
+```
+
+Both commands are CLI-only, so platform access cannot be escalated to over the
+network and recovering a locked-out admin requires database access rather than
+an emailed link. Seeded and reset accounts must choose a new password before any
+console route works, and enroll a TOTP authenticator on first sign-in; the
+secret is stored encrypted with `ENCRYPTION_KEY`.
+
+Password verification is isolated behind `PlatformCredentialsService`, which is
+the only code that knows how an admin proves identity. Adding an external
+identity provider later means adding a method there that resolves the same row;
+the reserved `ssoSubject` column exists so that does not require a migration.
+
+`OPERATOR` and above can impersonate a customer for support. Every session
+requires a written reason, is time-boxed to at most 60 minutes, is recorded in
+both `PlatformAuditLog` and the customer's own audit feed, shows a persistent
+banner in the customer app, and refuses destructive actions such as changing
+credentials, provider keys, billing, or membership.
 
 ## Local development
 
@@ -39,6 +90,7 @@ to complete file processing with the secure default.
 2. Copy each example to its untracked counterpart:
    - `apps/api/.env.example` → `apps/api/.env`
    - `apps/web/.env.example` → `apps/web/.env`
+   - `apps/admin/.env.example` → `apps/admin/.env`
    - `packages/database/.env.example` → `packages/database/.env`
 3. Keep `JWT_SECRET` identical in API and web configuration, and keep
    `DATABASE_URL` aligned between API and database configuration.

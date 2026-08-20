@@ -13,6 +13,8 @@
     "start:prod": "node dist/main",
     "worker:dev": "ts-node -r tsconfig-paths/register src/file-worker.ts",
     "worker:prod": "node dist/file-worker.js",
+    "platform:seed": "ts-node -r dotenv/config -r tsconfig-paths/register src/scripts/seed-platform-admin.ts",
+    "platform:grant": "ts-node -r dotenv/config -r tsconfig-paths/register src/scripts/grant-platform-admin.ts",
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "test": "jest",
     "test:watch": "jest --watch",

@@ -83,10 +83,6 @@ export class ProvidersController {
     @CurrentUser() user: AuthUser,
     @Param('provider', new ParseEnumPipe(AiProvider)) provider: AiProvider,
   ) {
-    return this.providersService.disconnect(
-      organizationId,
-      user.id,
-      provider,
-    );
+    return this.providersService.disconnect(organizationId, user.id, provider);
   }
 }

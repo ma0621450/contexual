@@ -176,6 +176,8 @@ export class UsersService {
       activeOrganizationId: user.activeOrganizationId,
       role: activeMembership?.role ?? null,
       memberships: user.memberships,
+      // Surfaced so the client can display a persistent impersonation notice.
+      isImpersonated: user.impersonation !== undefined,
     };
   }
 }
