@@ -93,6 +93,7 @@ model User {
 
   memberships     Membership[]
   conversations   Conversation[]
+  chatFolders     ChatFolder[]
   memories        Memory[]
   uploadedFiles   StoredFile[]
   auditLogs       AuditLog[]       @relation("AuditActor")
@@ -125,6 +126,7 @@ model Organization {
 
   memberships   Membership[]
   conversations Conversation[]
+  chatFolders   ChatFolder[]
   memories      Memory[]
   files         StoredFile[]
   invites       Invite[]
@@ -214,6 +216,36 @@ model Invite {
   @@index([email])
 }
 
+model ChatFolder {
+  id             String @id @default(cuid())
+  organizationId String
+  userId         String
+  name           String
+  instructions   String? @db.Text
+  defaultModel   String?
+
+  organization  Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  files         ChatFolderFile[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, userId])
+}
+
+model ChatFolderFile {
+  folderId String
+  fileId   String
+
+  folder ChatFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  file   StoredFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@id([folderId, fileId])
+  @@index([fileId])
+}
+
 model Conversation {
   id             String   @id @default(cuid())
   organizationId String
@@ -222,9 +254,18 @@ model Conversation {
   title    String  @default("New Conversation")
   provider AiProvider
   model    String
+  folderId String?
+  pinnedAt DateTime?
+  instructions String? @db.Text
+  shareToken      String?   @unique
+  isShared        Boolean   @default(false)
+  shareExpiresAt  DateTime?
+  activeLeafId    String?
+  webSearchEnabled Boolean @default(false)
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folder       ChatFolder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
 
   messages  Message[]
   usageLogs UsageLog[]
@@ -236,6 +277,8 @@ model Conversation {
 
   @@index([organizationId, userId])
   @@index([organizationId, userId, updatedAt])
+  @@index([organizationId, shareToken])
+  @@index([folderId])
 }
 
 model Memory {
@@ -260,6 +303,7 @@ model Memory {
 model Message {
   id             String      @id @default(cuid())
   conversationId String
+  parentId       String?
   role           MessageRole
 
   content String @db.Text
@@ -269,11 +313,14 @@ model Message {
   completionTokens Int?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  parent       Message?     @relation("MessageTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Message[]    @relation("MessageTree")
   attachments MessageAttachment[]
 
   createdAt DateTime @default(now())
 
   @@index([conversationId, createdAt])
+  @@index([conversationId, parentId])
 }
 
 model StoredFile {
@@ -295,11 +342,13 @@ model StoredFile {
   failureCode         String?
   failureMessage      String?
   extractedText       String?              @db.Text
+  embedding           Json?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   uploadedBy   User         @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
   attachments MessageAttachment[]
   processingJob FileProcessingJob?
+  folderLinks   ChatFolderFile[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

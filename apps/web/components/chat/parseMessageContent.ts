@@ -12,15 +12,31 @@ export type McqData = {
   explanation?: string;
 };
 
+export type ToolStepData = {
+  title: string;
+  status: 'running' | 'done' | 'error';
+  detail?: string;
+};
+
 export type ContentSegment =
   | { type: 'markdown'; content: string }
   | { type: 'thinking'; content: string; streaming?: boolean }
   | { type: 'mcq'; data: McqData }
   | { type: 'canvas'; artifact: CanvasArtifact }
   | { type: 'collapse'; title: string; content: string }
-  | { type: 'filetree'; content: string };
+  | { type: 'filetree'; content: string }
+  | { type: 'tool'; data: ToolStepData }
+  | { type: 'citation'; label: string }
+  | {
+      type: 'download';
+      filename: string;
+      content: string;
+      mimeType: string;
+      label?: string;
+    };
 
 const CANVAS_FENCE_LANGS = new Set(['canvas', 'artifact']);
+const DOWNLOAD_FENCE_LANGS = new Set(['csv', 'download', 'file', 'tsv']);
 
 const FENCE_RE =
   /```([a-zA-Z0-9_+-]*)([^\n]*)\n([\s\S]*?)(?:```|$)/g;
@@ -176,6 +192,87 @@ function parseMcqPayload(raw: string): McqData | null {
   };
 }
 
+function parseToolPayload(raw: string): ToolStepData | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      title?: unknown;
+      status?: unknown;
+      detail?: unknown;
+    };
+    if (typeof parsed.title === 'string' && parsed.title.trim()) {
+      const status =
+        parsed.status === 'running' ||
+        parsed.status === 'done' ||
+        parsed.status === 'error'
+          ? parsed.status
+          : 'done';
+      return {
+        title: parsed.title.trim(),
+        status,
+        detail:
+          typeof parsed.detail === 'string' ? parsed.detail.trim() : undefined,
+      };
+    }
+  } catch {
+    // Fall through to plain-text format.
+  }
+
+  let title = '';
+  let status: ToolStepData['status'] = 'done';
+  let detail: string | undefined;
+
+  for (const line of trimmed.split('\n')) {
+    const titleMatch = /^Title:\s*(.+)$/i.exec(line.trim());
+    const statusMatch = /^Status:\s*(.+)$/i.exec(line.trim());
+    const detailMatch = /^Detail:\s*(.+)$/i.exec(line.trim());
+    if (titleMatch) title = titleMatch[1].trim();
+    else if (statusMatch) {
+      const value = statusMatch[1].trim().toLowerCase();
+      if (value === 'running' || value === 'done' || value === 'error') {
+        status = value;
+      }
+    } else if (detailMatch) detail = detailMatch[1].trim();
+    else if (!title) title = line.trim();
+  }
+
+  return title ? { title, status, detail } : null;
+}
+
+function expandCitationSegments(segments: ContentSegment[]): ContentSegment[] {
+  const expanded: ContentSegment[] = [];
+  const citationRe = /【([^】]+)】/g;
+
+  for (const segment of segments) {
+    if (segment.type !== 'markdown') {
+      expanded.push(segment);
+      continue;
+    }
+
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    let found = false;
+    const re = new RegExp(citationRe.source, citationRe.flags);
+
+    while ((match = re.exec(segment.content)) !== null) {
+      found = true;
+      pushMarkdown(expanded, segment.content.slice(lastIndex, match.index));
+      expanded.push({ type: 'citation', label: match[1].trim() });
+      lastIndex = match.index + match[0].length;
+    }
+
+    if (found) {
+      pushMarkdown(expanded, segment.content.slice(lastIndex));
+    } else {
+      expanded.push(segment);
+    }
+  }
+
+  return expanded;
+}
+
 function pushMarkdown(segments: ContentSegment[], content: string) {
   if (!content.trim()) return;
   const last = segments[segments.length - 1];
@@ -321,6 +418,29 @@ export function parseMessageContent(content: string): ContentSegment[] {
           type: 'filetree',
           content: body.trimEnd(),
         });
+      } else if (lang === 'tool' || lang === 'step' || lang === 'tool-step') {
+        const data = parseToolPayload(body);
+        if (data) {
+          finalSegments.push({ type: 'tool', data });
+        } else {
+          pushMarkdown(finalSegments, match[0]);
+        }
+      } else if (DOWNLOAD_FENCE_LANGS.has(lang)) {
+        const filename =
+          parsedMeta.title ||
+          (lang === 'csv' || lang === 'tsv' ? `export.${lang}` : 'download.txt');
+        finalSegments.push({
+          type: 'download',
+          filename,
+          content: body.trimEnd(),
+          mimeType:
+            lang === 'csv' || lang === 'tsv'
+              ? 'text/csv;charset=utf-8'
+              : lang === 'json'
+                ? 'application/json;charset=utf-8'
+                : 'text/plain;charset=utf-8',
+          label: parsedMeta.title,
+        });
       } else if (CANVAS_FENCE_LANGS.has(lang)) {
         const language = parsedMeta.language || 'html';
         const title =
@@ -356,7 +476,7 @@ export function parseMessageContent(content: string): ContentSegment[] {
   }
   parseFences(working);
 
-  return finalSegments.filter((segment) => {
+  return expandCitationSegments(finalSegments).filter((segment) => {
     if (segment.type === 'markdown') return segment.content.length > 0;
     return true;
   });

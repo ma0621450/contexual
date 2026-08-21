@@ -100,4 +100,37 @@ describe('parseMessageContent', () => {
       'filetree',
     ]);
   });
+
+  it('parses tool steps and citation markers', () => {
+    const content = [
+      'Reading 【policy.pdf】 now.',
+      '',
+      '```tool',
+      JSON.stringify({
+        title: 'Scanning files',
+        status: 'done',
+        detail: '3 matches',
+      }),
+      '```',
+    ].join('\n');
+
+    const segments = parseMessageContent(content);
+    expect(segments.some((segment) => segment.type === 'citation')).toBe(true);
+    expect(segments.some((segment) => segment.type === 'tool')).toBe(true);
+  });
+
+  it('parses csv download fences', () => {
+    const segments = parseMessageContent(
+      ['```csv title="tasks.csv"', 'ID,Task', '1,Plan', '```'].join('\n'),
+    );
+    expect(segments).toEqual([
+      {
+        type: 'download',
+        filename: 'tasks.csv',
+        content: 'ID,Task\n1,Plan',
+        mimeType: 'text/csv;charset=utf-8',
+        label: 'tasks.csv',
+      },
+    ]);
+  });
 });

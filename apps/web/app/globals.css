@@ -288,3 +288,9 @@
 .markdown-body > :last-child {
   margin-bottom: 0;
 }
+
+.markdown-body pre,
+.markdown-body .not-prose {
+  display: block;
+  width: 100%;
+}

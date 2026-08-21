@@ -6,6 +6,7 @@ import {
   isValidElement,
   memo,
   useContext,
+  useMemo,
   useState,
   type ComponentPropsWithoutRef,
   type ReactNode,
@@ -20,7 +21,9 @@ import rehypeHighlight from 'rehype-highlight';
 import { CheckIcon, CopyIcon, EyeIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isPreviewableLanguage } from './parseMessageContent';
-import { DiffBlock, MermaidBlock } from './RichBlocks';
+import { DiffBlock, MermaidBlock, DownloadBlock, CitationChip } from './RichBlocks';
+import { CodeSandbox } from './CodeSandbox';
+import { splitDownloadLinks } from './download-utils';
 import 'katex/dist/katex.min.css';
 
 const InsideCodeBlock = createContext(false);
@@ -109,7 +112,7 @@ function CodeBlock({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="not-prose group/code my-4 overflow-hidden rounded-xl border border-border bg-muted/40">
+    <div className="not-prose my-4 block w-full overflow-hidden rounded-xl border border-border bg-muted/40">
       <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/60 px-3 py-1.5">
         <span className="font-mono text-[11px] tracking-wide text-muted-foreground uppercase">
           {language || 'text'}
@@ -133,6 +136,7 @@ function CodeBlock({ children }: { children: ReactNode }) {
           {children}
         </pre>
       </InsideCodeBlock.Provider>
+      <CodeSandbox language={language} code={code} />
     </div>
   );
 }
@@ -152,9 +156,15 @@ function Code({
     );
   }
 
+  const text = toPlainText(children);
+  const citationMatch = /^【(.+)】$/.exec(text.trim());
+  if (citationMatch) {
+    return <CitationChip label={citationMatch[1]} />;
+  }
+
   return (
     <code
-      className="rounded-md border border-border/60 bg-muted px-[0.35em] py-[0.15em] font-mono text-[0.875em] text-foreground"
+      className="rounded-md bg-muted px-[0.35em] py-[0.1em] font-mono text-[0.85em] text-foreground"
       {...props}
     >
       {children}
@@ -194,7 +204,9 @@ const components: Components = {
     </h6>
   ),
   p: ({ children }) => (
-    <p className="my-3 leading-7 first:mt-0 last:mb-0">{children}</p>
+    <p className="my-3 leading-7 first:mt-0 last:mb-0 [&_code]:align-baseline">
+      {children}
+    </p>
   ),
   strong: ({ children }) => (
     <strong className="font-semibold text-foreground">{children}</strong>
@@ -251,11 +263,12 @@ const components: Components = {
     </blockquote>
   ),
   hr: () => <hr className="my-6 border-border" />,
-  a: ({ children, href }) => (
+  a: ({ children, href, download }) => (
     <a
       href={href}
-      target="_blank"
-      rel="noreferrer noopener"
+      download={download}
+      target={href?.startsWith('data:') ? undefined : '_blank'}
+      rel={href?.startsWith('data:') ? undefined : 'noreferrer noopener'}
       className="font-medium text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary"
     >
       {children}
@@ -309,7 +322,7 @@ const rehypePlugins: PluggableList = [
   [rehypeHighlight, { detect: true, ignoreMissing: true }],
 ];
 
-export const Markdown = memo(function Markdown({
+function MarkdownBody({
   content,
   className,
   onOpenCanvas,
@@ -335,5 +348,50 @@ export const Markdown = memo(function Markdown({
         </ReactMarkdown>
       </div>
     </CanvasActionContext.Provider>
+  );
+}
+
+export const Markdown = memo(function Markdown({
+  content,
+  className,
+  onOpenCanvas,
+}: {
+  content: string;
+  className?: string;
+  onOpenCanvas?: (language: string, code: string) => void;
+}) {
+  const segments = useMemo(() => splitDownloadLinks(content), [content]);
+  const hasDownloads = segments.some((segment) => segment.type === 'download');
+
+  if (!hasDownloads) {
+    return (
+      <MarkdownBody
+        content={content}
+        className={className}
+        onOpenCanvas={onOpenCanvas}
+      />
+    );
+  }
+
+  return (
+    <div className={cn('space-y-3', className)}>
+      {segments.map((segment, index) =>
+        segment.type === 'download' ? (
+          <DownloadBlock
+            key={`download-${index}`}
+            filename={segment.filename}
+            content={segment.content}
+            mimeType={segment.mimeType}
+            label={segment.label}
+          />
+        ) : (
+          <MarkdownBody
+            key={`md-${index}`}
+            content={segment.content}
+            onOpenCanvas={onOpenCanvas}
+          />
+        ),
+      )}
+    </div>
   );
 });

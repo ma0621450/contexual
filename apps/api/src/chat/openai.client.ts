@@ -19,8 +19,26 @@ export type ChatCompletionResult = {
   completionTokens: number;
 };
 
+export type ChatToolCall = {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
+export type ChatCompletionWithTools = ChatCompletionResult & {
+  toolCalls: ChatToolCall[];
+};
+
 type OpenAiResponse = {
-  choices?: { message?: { content?: string } }[];
+  choices?: {
+    message?: {
+      content?: string | null;
+      tool_calls?: {
+        id?: string;
+        function?: { name?: string; arguments?: string };
+      }[];
+    };
+  }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   error?: { message?: string };
 };
@@ -44,6 +62,7 @@ export class OpenAiClient {
     stream: boolean,
     baseUrl = 'https://api.openai.com/v1',
     signal?: AbortSignal,
+    tools?: unknown[],
   ): Promise<Response> {
     let response: Response;
 
@@ -59,6 +78,7 @@ export class OpenAiClient {
           messages,
           stream,
           ...(stream ? { stream_options: { include_usage: true } } : {}),
+          ...(tools?.length ? { tools, tool_choice: 'auto' } : {}),
         }),
         signal: AbortSignal.any(
           [signal, AbortSignal.timeout(PROVIDER_TIMEOUT_MS)].filter(
@@ -120,6 +140,55 @@ export class OpenAiClient {
 
     return {
       content,
+      promptTokens: body.usage?.prompt_tokens ?? 0,
+      completionTokens: body.usage?.completion_tokens ?? 0,
+    };
+  }
+
+  async createChatCompletionWithTools(
+    apiKey: string,
+    model: string,
+    messages: ChatCompletionMessage[],
+    tools: unknown[],
+    baseUrl?: string,
+    signal?: AbortSignal,
+  ): Promise<ChatCompletionWithTools> {
+    const response = await this.requestCompletion(
+      apiKey,
+      model,
+      messages,
+      false,
+      baseUrl,
+      signal,
+      tools,
+    );
+    const body = (await response.json().catch(() => ({}))) as OpenAiResponse;
+
+    if (!response.ok) {
+      this.handleErrorResponse(response, body);
+    }
+
+    const message = body.choices?.[0]?.message;
+    const toolCalls = (message?.tool_calls ?? [])
+      .filter((call) => call.function?.name)
+      .map((call, index) => ({
+        id: call.id ?? `tool-${index}`,
+        name: call.function?.name ?? '',
+        arguments: (() => {
+          try {
+            return JSON.parse(call.function?.arguments || '{}') as Record<
+              string,
+              unknown
+            >;
+          } catch {
+            return { query: call.function?.arguments };
+          }
+        })(),
+      }));
+
+    return {
+      content: typeof message?.content === 'string' ? message.content : '',
+      toolCalls,
       promptTokens: body.usage?.prompt_tokens ?? 0,
       completionTokens: body.usage?.completion_tokens ?? 0,
     };

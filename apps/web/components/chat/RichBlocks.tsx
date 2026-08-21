@@ -7,9 +7,16 @@ import {
   FolderIcon,
   FolderOpenIcon,
   FileIcon,
+  LoaderCircleIcon,
+  CheckCircle2Icon,
+  AlertCircleIcon,
+  BookOpenIcon,
+  DownloadIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import { sanitizeMermaidSource } from './mermaid-utils';
+import type { ToolStepData } from './parseMessageContent';
 
 export function CollapseBlock({
   title,
@@ -277,6 +284,105 @@ try {
           Rendering diagram…
         </div>
       )}
+    </div>
+  );
+}
+
+export function ToolStepBlock({ data }: { data: ToolStepData }) {
+  const statusIcon =
+    data.status === 'running' ? (
+      <LoaderCircleIcon className="size-4 animate-spin text-primary" />
+    ) : data.status === 'error' ? (
+      <AlertCircleIcon className="size-4 text-destructive" />
+    ) : (
+      <CheckCircle2Icon className="size-4 text-success" />
+    );
+
+  return (
+    <div className="my-2 flex items-start gap-2.5 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+      <span className="mt-0.5 shrink-0">{statusIcon}</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">{data.title}</p>
+        {data.detail ? (
+          <p className="mt-0.5 text-xs text-muted-foreground">{data.detail}</p>
+        ) : null}
+      </div>
+      <span
+        className={cn(
+          'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase',
+          data.status === 'running' && 'bg-primary/10 text-primary',
+          data.status === 'done' && 'bg-success/10 text-success',
+          data.status === 'error' && 'bg-destructive/10 text-destructive',
+        )}
+      >
+        {data.status}
+      </span>
+    </div>
+  );
+}
+
+export function CitationChip({ label }: { label: string }) {
+  return (
+    <span className="mx-0.5 inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-muted/50 px-1.5 py-0.5 align-middle text-[11px] font-medium text-muted-foreground">
+      <BookOpenIcon className="size-3 shrink-0" />
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
+export function DownloadBlock({
+  filename,
+  content,
+  mimeType,
+  label,
+}: {
+  filename: string;
+  content: string;
+  mimeType: string;
+  label?: string;
+}) {
+  const lines = content.split('\n').filter((line) => line.trim().length > 0);
+  const sizeLabel =
+    content.length < 1024
+      ? `${content.length} B`
+      : `${(content.length / 1024).toFixed(1)} KB`;
+
+  function download() {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="my-4 block w-full overflow-hidden rounded-xl border border-border bg-card">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+          <FileIcon className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{label ?? filename}</p>
+          <p className="text-[11px] text-muted-foreground">
+            {filename} · {sizeLabel}
+            {mimeType.includes('csv') && lines.length > 1
+              ? ` · ${Math.max(0, lines.length - 1)} rows`
+              : ''}
+          </p>
+        </div>
+        <Button type="button" size="sm" onClick={download}>
+          <DownloadIcon className="size-3.5" />
+          Download
+        </Button>
+      </div>
+      {mimeType.includes('csv') || mimeType.includes('text') ? (
+        <pre className="max-h-36 overflow-auto border-t border-border bg-muted/30 px-4 py-3 font-mono text-[11px] leading-5 text-muted-foreground">
+          {content.slice(0, 1200)}
+          {content.length > 1200 ? '\n…' : ''}
+        </pre>
+      ) : null}
     </div>
   );
 }

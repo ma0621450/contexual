@@ -11,6 +11,7 @@ import {
   XIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import {
   Dialog,
   DialogContent,
@@ -155,17 +156,53 @@ export function CanvasModal({
   open: boolean;
   onClose: () => void;
 }) {
+  return (
+    <Dialog
+      open={open && Boolean(artifact)}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+    >
+      <DialogContent className="top-3 left-3 flex h-[calc(100vh-1.5rem)] w-[calc(100vw-1.5rem)] max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:top-4 sm:left-4 sm:h-[calc(100vh-2rem)] sm:w-[calc(100vw-2rem)] [&>button]:hidden">
+        {artifact ? <CanvasViewer artifact={artifact} onClose={onClose} /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function CanvasSidePanel({
+  artifact,
+  onClose,
+}: {
+  artifact: CanvasArtifact;
+  onClose: () => void;
+}) {
+  return (
+    <aside className="hidden h-full w-[min(44rem,45vw)] shrink-0 flex-col border-l border-border bg-background lg:flex">
+      <CanvasViewer artifact={artifact} onClose={onClose} className="h-full" />
+    </aside>
+  );
+}
+
+function CanvasViewer({
+  artifact,
+  onClose,
+  className,
+}: {
+  artifact: CanvasArtifact;
+  onClose: () => void;
+  className?: string;
+}) {
   const [tab, setTab] = useState('preview');
   const [copied, setCopied] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
   const srcDoc = useMemo(
-    () => (artifact ? buildPreviewDocument(artifact) : ''),
+    () => buildPreviewDocument(artifact),
     [artifact],
   );
 
   async function copy() {
-    if (!artifact) return;
     try {
       await navigator.clipboard.writeText(artifact.content);
       setCopied(true);
@@ -176,7 +213,6 @@ export function CanvasModal({
   }
 
   function download() {
-    if (!artifact) return;
     const extension =
       artifact.language === 'svg'
         ? 'svg'
@@ -197,104 +233,93 @@ export function CanvasModal({
   }
 
   return (
-    <Dialog
-      open={open && Boolean(artifact)}
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen) onClose();
-      }}
-    >
-      <DialogContent className="top-3 left-3 flex h-[calc(100vh-1.5rem)] w-[calc(100vw-1.5rem)] max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:top-4 sm:left-4 sm:h-[calc(100vh-2rem)] sm:w-[calc(100vw-2rem)] [&>button]:hidden">
-        {artifact ? (
-          <>
-            <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5 sm:px-4">
-              <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <Code2Icon className="size-4" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <DialogTitle className="truncate text-sm font-medium">
-                  {artifact.title}
-                </DialogTitle>
-                <DialogDescription className="truncate text-[11px] text-muted-foreground uppercase">
-                  {artifact.language} · Canvas
-                </DialogDescription>
-              </div>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                onClick={() => setReloadKey((value) => value + 1)}
-                aria-label="Refresh preview"
-              >
-                <RefreshCwIcon className="size-4" />
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                onClick={() => void copy()}
-                aria-label={copied ? 'Copied' : 'Copy source'}
-              >
-                {copied ? (
-                  <CheckIcon className="size-4 text-success" />
-                ) : (
-                  <CopyIcon className="size-4" />
-                )}
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                onClick={download}
-                aria-label="Download source"
-              >
-                <DownloadIcon className="size-4" />
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                onClick={onClose}
-                aria-label="Close canvas"
-              >
-                <XIcon className="size-4" />
-              </Button>
-            </div>
+    <div className={cn('flex min-h-0 min-w-0 flex-1 flex-col', className)}>
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5 sm:px-4">
+        <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Code2Icon className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <DialogTitle className="truncate text-sm font-medium">
+            {artifact.title}
+          </DialogTitle>
+          <DialogDescription className="truncate text-[11px] text-muted-foreground uppercase">
+            {artifact.language} · Canvas
+          </DialogDescription>
+        </div>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          onClick={() => setReloadKey((value) => value + 1)}
+          aria-label="Refresh preview"
+        >
+          <RefreshCwIcon className="size-4" />
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          onClick={() => void copy()}
+          aria-label={copied ? 'Copied' : 'Copy source'}
+        >
+          {copied ? (
+            <CheckIcon className="size-4 text-success" />
+          ) : (
+            <CopyIcon className="size-4" />
+          )}
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          onClick={download}
+          aria-label="Download source"
+        >
+          <DownloadIcon className="size-4" />
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          onClick={onClose}
+          aria-label="Close canvas"
+        >
+          <XIcon className="size-4" />
+        </Button>
+      </div>
 
-            <Tabs
-              value={tab}
-              onValueChange={setTab}
-              className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden"
-            >
-              <div className="shrink-0 border-b border-border px-3 py-2 sm:px-4">
-                <TabsList>
-                  <TabsTrigger value="preview">Preview</TabsTrigger>
-                  <TabsTrigger value="code">Code</TabsTrigger>
-                </TabsList>
-              </div>
-              <TabsContent
-                value="preview"
-                className="mt-0 min-h-0 min-w-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
-              >
-                <iframe
-                  key={`${artifact.id}-${reloadKey}`}
-                  title={artifact.title}
-                  sandbox="allow-scripts"
-                  srcDoc={srcDoc}
-                  className="block h-full w-full max-w-full border-0 bg-white"
-                />
-              </TabsContent>
-              <TabsContent
-                value="code"
-                className="mt-0 min-h-0 min-w-0 flex-1 overflow-auto data-[state=inactive]:hidden"
-              >
-                <pre className="max-w-full p-4 font-mono text-[12px] leading-6 break-words whitespace-pre-wrap sm:p-6">
-                  {artifact.content}
-                </pre>
-              </TabsContent>
-            </Tabs>
-          </>
-        ) : null}
-      </DialogContent>
-    </Dialog>
+      <Tabs
+        value={tab}
+        onValueChange={setTab}
+        className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden"
+      >
+        <div className="shrink-0 border-b border-border px-3 py-2 sm:px-4">
+          <TabsList>
+            <TabsTrigger value="preview">Preview</TabsTrigger>
+            <TabsTrigger value="code">Code</TabsTrigger>
+          </TabsList>
+        </div>
+        <TabsContent
+          value="preview"
+          className="mt-0 min-h-0 min-w-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
+        >
+          <iframe
+            key={`${artifact.id}-${reloadKey}`}
+            title={artifact.title}
+            sandbox="allow-scripts"
+            srcDoc={srcDoc}
+            className="block h-full w-full max-w-full border-0 bg-white"
+          />
+        </TabsContent>
+        <TabsContent
+          value="code"
+          className="mt-0 min-h-0 min-w-0 flex-1 overflow-auto data-[state=inactive]:hidden"
+        >
+          <pre className="max-w-full p-4 font-mono text-[12px] leading-6 break-words whitespace-pre-wrap sm:p-6">
+            {artifact.content}
+          </pre>
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }

@@ -8,21 +8,41 @@ import { AiProvider } from '@contexual/database';
 import {
   type ChatCompletionMessage,
   type ChatCompletionResult,
+  type ChatCompletionWithTools,
   OpenAiClient,
   type OpenAiStreamPart,
 } from './openai.client';
 import { parseSseStream } from './sse-parser';
+import {
+  type AgentToolDefinition,
+  toAnthropicTools,
+  toGeminiTools,
+  toOpenAiTools,
+} from './chat-tools';
 
 const PROVIDER_TIMEOUT_MS = 120_000;
 
 type AnthropicResponse = {
-  content?: { type?: string; text?: string }[];
+  content?: {
+    type?: string;
+    text?: string;
+    id?: string;
+    name?: string;
+    input?: Record<string, unknown>;
+  }[];
   usage?: { input_tokens?: number; output_tokens?: number };
   error?: { message?: string };
 };
 
 type GeminiResponse = {
-  candidates?: { content?: { parts?: { text?: string }[] } }[];
+  candidates?: {
+    content?: {
+      parts?: {
+        text?: string;
+        functionCall?: { name?: string; args?: Record<string, unknown> };
+      }[];
+    };
+  }[];
   usageMetadata?: {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
@@ -62,6 +82,58 @@ export class AiProviderClient {
         );
       default:
         return this.openAiClient.createChatCompletion(apiKey, model, messages);
+    }
+  }
+
+  completeWithTools(
+    provider: AiProvider,
+    apiKey: string,
+    model: string,
+    messages: ChatCompletionMessage[],
+    tools: AgentToolDefinition[],
+    signal?: AbortSignal,
+  ): Promise<ChatCompletionWithTools> {
+    if (tools.length === 0) {
+      return this.createChatCompletion(provider, apiKey, model, messages).then(
+        (result) => ({ ...result, toolCalls: [] }),
+      );
+    }
+
+    switch (provider) {
+      case AiProvider.ANTHROPIC:
+        return this.completeAnthropicWithTools(
+          apiKey,
+          model,
+          messages,
+          tools,
+          signal,
+        );
+      case AiProvider.GOOGLE:
+        return this.completeGeminiWithTools(
+          apiKey,
+          model,
+          messages,
+          tools,
+          signal,
+        );
+      case AiProvider.XAI:
+        return this.openAiClient.createChatCompletionWithTools(
+          apiKey,
+          model,
+          messages,
+          toOpenAiTools(tools),
+          'https://api.x.ai/v1',
+          signal,
+        );
+      default:
+        return this.openAiClient.createChatCompletionWithTools(
+          apiKey,
+          model,
+          messages,
+          toOpenAiTools(tools),
+          undefined,
+          signal,
+        );
     }
   }
 
@@ -208,6 +280,88 @@ export class AiProviderClient {
         };
       }
     }
+  }
+
+  private async completeAnthropicWithTools(
+    apiKey: string,
+    model: string,
+    messages: ChatCompletionMessage[],
+    tools: AgentToolDefinition[],
+    signal?: AbortSignal,
+  ): Promise<ChatCompletionWithTools> {
+    const response = await this.safeFetch(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          ...this.anthropicRequestBody(model, messages),
+          tools: toAnthropicTools(tools),
+        }),
+      },
+      signal,
+    );
+    const body = (await response.json().catch(() => ({}))) as AnthropicResponse;
+    this.assertProviderResponse(response, body.error?.message);
+    const text = body.content
+      ?.filter((part) => part.type === 'text')
+      .map((part) => part.text ?? '')
+      .join('');
+    const toolCalls = (body.content ?? [])
+      .filter((part) => part.type === 'tool_use' && part.name)
+      .map((part, index) => ({
+        id: part.id ?? `tool-${index}`,
+        name: part.name ?? '',
+        arguments: part.input ?? {},
+      }));
+    return {
+      content: text ?? '',
+      toolCalls,
+      promptTokens: body.usage?.input_tokens ?? 0,
+      completionTokens: body.usage?.output_tokens ?? 0,
+    };
+  }
+
+  private async completeGeminiWithTools(
+    apiKey: string,
+    model: string,
+    messages: ChatCompletionMessage[],
+    tools: AgentToolDefinition[],
+    signal?: AbortSignal,
+  ): Promise<ChatCompletionWithTools> {
+    const response = await this.safeFetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ...this.geminiRequestBody(messages),
+          tools: toGeminiTools(tools),
+        }),
+      },
+      signal,
+    );
+    const body = (await response.json().catch(() => ({}))) as GeminiResponse;
+    this.assertProviderResponse(response, body.error?.message);
+    const parts = body.candidates?.[0]?.content?.parts ?? [];
+    const content = parts.map((part) => part.text ?? '').join('');
+    const toolCalls = parts
+      .filter((part) => part.functionCall?.name)
+      .map((part, index) => ({
+        id: `tool-${index}`,
+        name: part.functionCall?.name ?? '',
+        arguments: part.functionCall?.args ?? {},
+      }));
+    return {
+      content,
+      toolCalls,
+      promptTokens: body.usageMetadata?.promptTokenCount ?? 0,
+      completionTokens: body.usageMetadata?.candidatesTokenCount ?? 0,
+    };
   }
 
   private async createAnthropicCompletion(
