@@ -17,8 +17,13 @@ async function bootstrap() {
     }),
   );
 
+  const allowedOrigins = [
+    process.env.WEB_URL ?? 'http://localhost:3000',
+    process.env.ADMIN_URL ?? 'http://localhost:3002',
+  ];
+
   app.enableCors({
-    origin: process.env.WEB_URL ?? 'http://localhost:3000',
+    origin: allowedOrigins,
     credentials: true,
   });
 

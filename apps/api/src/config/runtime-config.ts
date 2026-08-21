@@ -44,6 +44,23 @@ export function validateRuntimeConfig(
     errors.push('ENCRYPTION_KEY must be a non-default 32-byte hex key');
   }
   validateUrl('WEB_URL', webUrl, errors, true);
+  if (env.PLATFORM_SEED_PASSWORD) {
+    const seedPassword = env.PLATFORM_SEED_PASSWORD;
+    if (
+      seedPassword.length < 16 ||
+      /password|admin|change|default|contexual|123456/i.test(seedPassword)
+    ) {
+      errors.push(
+        'PLATFORM_SEED_PASSWORD must be a strong, non-guessable value',
+      );
+    }
+  }
+  if (env.ADMIN_URL) {
+    validateUrl('ADMIN_URL', env.ADMIN_URL, errors, true);
+    if (env.ADMIN_URL.trim() === webUrl.trim()) {
+      errors.push('ADMIN_URL must not share an origin with WEB_URL');
+    }
+  }
 
   if (resendApiKey && !resendApiKey.startsWith('re_')) {
     errors.push('RESEND_API_KEY must be a Resend API key');

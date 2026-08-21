@@ -350,7 +350,9 @@ export class ProvidersService {
         ? [...new Set(enabledModels)]
         : catalogIds;
 
-    const invalid = requested.filter((modelId) => !catalogIds.includes(modelId));
+    const invalid = requested.filter(
+      (modelId) => !catalogIds.includes(modelId),
+    );
     if (invalid.length > 0) {
       throw new BadRequestException(
         `These models are not available for ${provider}: ${invalid.join(', ')}`,
@@ -390,7 +392,7 @@ export class ProvidersService {
 
     const recommended = getDefaultModel(provider);
     if (enabledModels.includes(recommended)) return recommended;
-    return enabledModels[0]!;
+    return enabledModels[0];
   }
 
   private normalizeEnabledModels(

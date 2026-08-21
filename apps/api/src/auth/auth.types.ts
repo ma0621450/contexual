@@ -3,12 +3,24 @@ import type { MembershipRole } from '@contexual/database';
 export const ACCESS_TOKEN_COOKIE = 'contexual_access_token';
 export const REFRESH_TOKEN_COOKIE = 'contexual_refresh_token';
 
+/**
+ * Present only on sessions minted by platform staff impersonation. The grant is
+ * re-checked against the database on every request so ending it takes effect
+ * immediately rather than at token expiry.
+ */
+export type ImpersonationClaim = {
+  grantId: string;
+  platformAdminId: string;
+  organizationId: string;
+};
+
 export type AccessTokenPayload = {
   sub: string;
   email: string;
   emailVerified: boolean;
   hasMembership: boolean;
   sessionVersion: number;
+  impersonation?: ImpersonationClaim;
 };
 
 export type AuthMembership = {
@@ -26,6 +38,7 @@ export type AuthUser = {
   sessionVersion: number;
   activeOrganizationId: string | null;
   memberships: AuthMembership[];
+  impersonation?: ImpersonationClaim;
 };
 
 export type AuthUserWithPassword = AuthUser & {
