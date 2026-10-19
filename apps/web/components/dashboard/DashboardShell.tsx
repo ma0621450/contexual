@@ -1,58 +1,51 @@
 'use client';
 
-import { useState } from 'react';
+/* Figma SVGs are rendered at the width and height authored in the file. */
+/* eslint-disable @next/next/no-img-element */
+
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import {
-  ActivityIcon,
-  CreditCardIcon,
-  FilesIcon,
-  LayoutDashboardIcon,
-  type LucideIcon,
-  MenuIcon,
-  MessagesSquareIcon,
-  PlugIcon,
-  SettingsIcon,
-  SparklesIcon,
-  UsersIcon,
-  XIcon,
-} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { OrganizationMembership } from '@/lib/api/server';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { CommandPalette } from '@/components/dashboard/CommandPalette';
 import { OrganizationSwitcher } from '@/components/dashboard/OrganizationSwitcher';
 import { UserMenu } from '@/components/dashboard/UserMenu';
+import {
+  dashboardCrumbs,
+  isNavActive,
+  visibleNav,
+  type DashboardNavItem,
+} from '@/components/dashboard/dashboard-nav';
 
-type NavItem = {
-  href: string;
-  label: string;
-  icon: LucideIcon;
-};
+const COLLAPSED_KEY = 'promplex.sidebar.collapsed';
+const SIDEBAR_EVENT = 'promplex-sidebar';
 
-type NavGroup = {
-  label: string;
-  items: NavItem[];
-};
+function collapsedSnapshot() {
+  return window.localStorage.getItem(COLLAPSED_KEY) === '1';
+}
 
-const ICONS: Record<string, LucideIcon> = {
-  '/dashboard': LayoutDashboardIcon,
-  '/dashboard/chat': MessagesSquareIcon,
-  '/dashboard/files': FilesIcon,
-  '/dashboard/memories': SparklesIcon,
-  '/dashboard/team': UsersIcon,
-  '/dashboard/providers': PlugIcon,
-  '/dashboard/usage': CreditCardIcon,
-  '/dashboard/audit': ActivityIcon,
-  '/dashboard/settings': SettingsIcon,
-};
+function subscribeCollapsed(onStoreChange: () => void) {
+  window.addEventListener(SIDEBAR_EVENT, onStoreChange);
+  return () => window.removeEventListener(SIDEBAR_EVENT, onStoreChange);
+}
+
+function modifierKey() {
+  if (typeof navigator === 'undefined') return 'Ctrl' as const;
+  const platform = `${navigator.platform} ${navigator.userAgent}`;
+  return /Mac|iPhone|iPad/.test(platform) ? ('⌘' as const) : ('Ctrl' as const);
+}
+
+const focusRing =
+  'outline-none focus-visible:ring-2 focus-visible:ring-white/50';
 
 type DashboardShellProps = {
-  children: React.ReactNode;
+  children: ReactNode;
   isAdmin: boolean;
   user: { name: string; email: string; role: string };
   organizations: OrganizationMembership[];
   activeOrganizationId: string;
+  banner?: ReactNode;
 };
 
 export function DashboardShell({
@@ -61,179 +54,324 @@ export function DashboardShell({
   user,
   organizations,
   activeOrganizationId,
+  banner,
 }: DashboardShellProps) {
   const pathname = usePathname();
+  const collapsed = useSyncExternalStore(
+    subscribeCollapsed,
+    collapsedSnapshot,
+    () => false,
+  );
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const shortcut = useSyncExternalStore(
+    () => () => {},
+    modifierKey,
+    () => 'Ctrl' as const,
+  );
 
-  const groups: NavGroup[] = [
-    {
-      label: 'Workspace',
-      items: [
-        { href: '/dashboard', label: 'Overview', icon: ICONS['/dashboard'] },
-        {
-          href: '/dashboard/chat',
-          label: 'Chat',
-          icon: ICONS['/dashboard/chat'],
-        },
-        {
-          href: '/dashboard/files',
-          label: 'Files',
-          icon: ICONS['/dashboard/files'],
-        },
-        {
-          href: '/dashboard/memories',
-          label: 'Memories',
-          icon: ICONS['/dashboard/memories'],
-        },
-      ],
-    },
-    {
-      label: 'Team',
-      items: [
-        {
-          href: '/dashboard/team',
-          label: 'Team',
-          icon: ICONS['/dashboard/team'],
-        },
-        {
-          href: '/dashboard/providers',
-          label: 'Providers',
-          icon: ICONS['/dashboard/providers'],
-        },
-        {
-          href: '/dashboard/usage',
-          label: isAdmin ? 'Usage & billing' : 'My usage',
-          icon: ICONS['/dashboard/usage'],
-        },
-        {
-          href: '/dashboard/settings',
-          label: 'Settings',
-          icon: ICONS['/dashboard/settings'],
-        },
-      ],
-    },
-  ];
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen(true);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
-  if (isAdmin) {
-    groups.push({
-      label: 'Admin',
-      items: [
-        {
-          href: '/dashboard/audit',
-          label: 'Audit log',
-          icon: ICONS['/dashboard/audit'],
-        },
-      ],
-    });
+  function toggleCollapsed() {
+    window.localStorage.setItem(COLLAPSED_KEY, collapsed ? '0' : '1');
+    window.dispatchEvent(new Event(SIDEBAR_EVENT));
   }
 
-  const activeItem = groups
-    .flatMap((group) => group.items)
-    .filter(
-      (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
-    )
-    .sort((a, b) => b.href.length - a.href.length)[0];
-  const pageTitle = activeItem?.label ?? 'Dashboard';
-
-  function isActive(href: string) {
-    if (href === '/dashboard') return pathname === '/dashboard';
-    return pathname === href || pathname.startsWith(`${href}/`);
-  }
+  const items = visibleNav(isAdmin);
+  const groups = ['Workspace', 'Main', 'Admin']
+    .map((label) => ({
+      label,
+      items: items.filter((item) => item.group === label),
+    }))
+    .filter((group) => group.items.length > 0);
+  const crumbs = dashboardCrumbs(pathname, isAdmin);
 
   return (
-    <div className="flex min-h-screen bg-background">
-      {mobileOpen ? (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm lg:hidden"
-          onClick={() => setMobileOpen(false)}
-        />
-      ) : null}
-
-      <aside
-        className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-sidebar-border bg-sidebar transition-transform lg:static lg:translate-x-0',
-          mobileOpen ? 'translate-x-0' : '-translate-x-full',
-        )}
-      >
-        <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-4">
-          <Link
-            href="/dashboard"
-            className="flex items-center gap-2 font-semibold"
-          >
-            <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
-              P
-            </span>
-            Promplex
-          </Link>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="ml-auto lg:hidden"
-            onClick={() => setMobileOpen(false)}
+    <div className="flex h-dvh flex-col bg-shell-bg text-shell-text">
+      {banner}
+      <div className="flex min-h-0 flex-1 gap-3 p-[17px]">
+        {mobileOpen ? (
+          <button
+            type="button"
             aria-label="Close menu"
-          >
-            <XIcon className="size-4" />
-          </Button>
-        </div>
-
-        <div className="px-3 py-3">
-          <OrganizationSwitcher
-            organizations={organizations}
-            activeOrganizationId={activeOrganizationId}
+            className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+            onClick={() => setMobileOpen(false)}
           />
-        </div>
+        ) : null}
 
-        <ScrollArea className="flex-1 px-3">
-          <nav className="flex flex-col gap-5 pb-6">
-            {groups.map((group) => (
-              <div key={group.label} className="flex flex-col gap-1">
-                <p className="px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  {group.label}
-                </p>
-                {group.items.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      onClick={() => setMobileOpen(false)}
-                      className={cn(
-                        'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors',
-                        isActive(item.href)
-                          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                          : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
-                      )}
-                    >
-                      <Icon className="size-4" />
-                      {item.label}
-                    </Link>
-                  );
-                })}
-              </div>
+        <aside
+          className={cn(
+            'z-50 flex shrink-0 flex-col rounded-[15px] bg-shell-panel py-[23px] transition-[width,transform] duration-200',
+            collapsed ? 'w-[60px] px-2' : 'w-[278px] px-[18px]',
+            mobileOpen
+              ? 'fixed inset-y-[17px] left-[17px] flex w-[278px] translate-x-0 bg-raised px-[18px] shadow-elevated'
+              : 'fixed inset-y-[17px] left-[17px] hidden -translate-x-[120%] lg:flex lg:static lg:translate-x-0',
+          )}
+        >
+          <div
+            className={cn(
+              'flex items-center',
+              collapsed && !mobileOpen ? 'justify-center' : 'justify-between',
+            )}
+          >
+            <Link
+              href="/dashboard"
+              aria-label="Overview"
+              className={cn('inline-flex', focusRing, 'rounded-md')}
+              onClick={() => setMobileOpen(false)}
+            >
+              <img
+                src="/brand/logo-mark.svg"
+                alt=""
+                width={40.392}
+                height={48}
+              />
+            </Link>
+          </div>
+
+          <nav
+            aria-label="Workspace"
+            className={cn(
+              'mt-[47px] flex min-h-0 flex-1 flex-col gap-[18px] overflow-y-auto',
+              collapsed && !mobileOpen && 'mt-[49px] items-center gap-1.5',
+            )}
+          >
+            {(collapsed && !mobileOpen ? (
+              <CollapsedNav
+                items={items}
+                pathname={pathname}
+                onNavigate={() => setMobileOpen(false)}
+              />
+            ) : (
+              groups.map((group) => (
+                <div key={group.label} className="flex flex-col gap-3">
+                  <p className="text-sm font-medium tracking-[-0.14px] text-shell-muted uppercase">
+                    {group.label}
+                  </p>
+                  <div className="flex flex-col">
+                    {group.items.map((item) => (
+                      <NavLink
+                        key={item.href}
+                        item={item}
+                        active={isNavActive(pathname, item.href)}
+                        onNavigate={() => setMobileOpen(false)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))
             ))}
           </nav>
-        </ScrollArea>
-      </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-md sm:px-6">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="lg:hidden"
-            onClick={() => setMobileOpen(true)}
-            aria-label="Open menu"
-          >
-            <MenuIcon className="size-4" />
-          </Button>
-          <h1 className="text-base font-semibold">{pageTitle}</h1>
-          <div className="ml-auto flex items-center gap-1.5">
-            <UserMenu name={user.name} email={user.email} role={user.role} />
+          <div className={cn('mt-4', collapsed && !mobileOpen && 'flex justify-center')}>
+            <OrganizationSwitcher
+              organizations={organizations}
+              activeOrganizationId={activeOrganizationId}
+              compact={collapsed && !mobileOpen}
+            />
           </div>
-        </header>
 
-        <main className="flex-1">{children}</main>
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className={cn(
+              'mt-3 hidden size-10 items-center justify-center rounded-[10px] text-shell-muted hover:bg-shell-hover hover:text-shell-text lg:inline-flex',
+              focusRing,
+            )}
+          >
+            <SidebarGlyph />
+          </button>
+        </aside>
+
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
+          <header className="flex h-[50px] shrink-0 items-center gap-3 rounded-[8px] bg-shell-panel px-3.5">
+            <button
+              type="button"
+              className={cn(
+                'inline-flex size-8 items-center justify-center rounded-md text-shell-muted hover:bg-shell-hover lg:hidden',
+                focusRing,
+              )}
+              onClick={() => setMobileOpen(true)}
+              aria-label="Open menu"
+            >
+              <MenuGlyph />
+            </button>
+            <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
+              <ol className="flex min-w-0 items-center gap-2 text-sm font-medium tracking-[-0.14px] text-shell-muted uppercase">
+                {crumbs.map((crumb, index) => {
+                  const last = index === crumbs.length - 1;
+                  return (
+                    <li key={`${crumb.label}-${index}`} className="flex min-w-0 items-center gap-2">
+                      {index > 0 ? (
+                        <span aria-hidden="true" className="text-dim">
+                          /
+                        </span>
+                      ) : null}
+                      {crumb.href && !last ? (
+                        <Link
+                          href={crumb.href}
+                          className={cn('truncate hover:text-shell-text', focusRing, 'rounded-sm')}
+                        >
+                          {crumb.label}
+                        </Link>
+                      ) : (
+                        <span className="truncate" aria-current={last ? 'page' : undefined}>
+                          {crumb.label}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            </nav>
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className={cn(
+                'flex h-8 items-center gap-1.5 rounded-[6px] bg-shell-raised px-2 text-[11px] font-medium text-shell-muted hover:bg-shell-hover',
+                focusRing,
+                'w-8 justify-center sm:w-[311px] sm:justify-start',
+              )}
+              aria-label={`Search anything (${shortcut === '⌘' ? 'Command' : 'Control'} K)`}
+            >
+              <img
+                src="/brand/nav/search.svg"
+                alt=""
+                width="15.55"
+                height="15.55"
+              />
+              <span className="hidden flex-1 text-left sm:inline">
+                Search anything...
+              </span>
+              <span className="hidden items-center gap-0.5 sm:inline-flex">
+                {shortcut === '⌘' ? (
+                  <img
+                    src="/brand/nav/command.svg"
+                    alt=""
+                    width="9.33"
+                    height="9.33"
+                  />
+                ) : (
+                  <span>Ctrl</span>
+                )}
+                <span>K</span>
+              </span>
+            </button>
+            <UserMenu name={user.name} email={user.email} role={user.role} />
+          </header>
+
+          <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+        </div>
       </div>
+
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        isAdmin={isAdmin}
+        organizations={organizations}
+        activeOrganizationId={activeOrganizationId}
+        shortcutLabel={shortcut === '⌘' ? 'Command K' : 'Control K'}
+      />
     </div>
+  );
+}
+
+function NavLink({
+  item,
+  active,
+  collapsed = false,
+  onNavigate,
+}: {
+  item: DashboardNavItem;
+  active: boolean;
+  collapsed?: boolean;
+  onNavigate: () => void;
+}) {
+  return (
+    <Link
+      href={item.href}
+      aria-current={active ? 'page' : undefined}
+      onClick={onNavigate}
+      className={cn(
+        'relative flex items-center rounded-[10px] text-base font-medium tracking-[-0.16px] transition-colors',
+        focusRing,
+        collapsed ? 'size-10 justify-center' : 'gap-2.5 px-3 py-2.5',
+        active
+          ? 'bg-shell-active text-shell-text'
+          : 'text-shell-muted hover:bg-shell-hover hover:text-shell-text',
+      )}
+    >
+      {active ? (
+        <span
+          aria-hidden="true"
+          className="absolute top-1/2 left-0 h-5 w-[3px] -translate-y-1/2 rounded-r bg-white"
+        />
+      ) : null}
+      <img src={item.icon} alt="" width={20} height={20} />
+      <span className={collapsed ? 'sr-only' : undefined}>{item.label}</span>
+    </Link>
+  );
+}
+
+function CollapsedNav({
+  items,
+  pathname,
+  onNavigate,
+}: {
+  items: DashboardNavItem[];
+  pathname: string;
+  onNavigate: () => void;
+}) {
+  const sections = ['Workspace', 'Main', 'Admin']
+    .map((group) => items.filter((item) => item.group === group))
+    .filter((section) => section.length > 0);
+
+  return (
+    <>
+      {sections.map((section, index) => (
+        <div key={section[0]?.group} className="flex flex-col items-center gap-1.5">
+          {index > 0 ? (
+            <span aria-hidden="true" className="my-1 h-px w-6 bg-shell-line" />
+          ) : null}
+          {section.map((item) => (
+            <NavLink
+              key={item.href}
+              item={item}
+              active={isNavActive(pathname, item.href)}
+              collapsed
+              onNavigate={onNavigate}
+            />
+          ))}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function SidebarGlyph() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect x="3" y="4" width="14" height="12" rx="2" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 4v12" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
+function MenuGlyph() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+      <path d="M3 5h12M3 9h12M3 13h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
   );
 }

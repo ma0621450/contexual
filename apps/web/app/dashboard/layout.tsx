@@ -38,16 +38,14 @@ export default async function DashboardLayout({
   }
 
   return (
-    <>
-      {user.isImpersonated ? <ImpersonationBanner /> : null}
-      <DashboardShell
-        isAdmin={user.role === 'ADMIN'}
-        user={{ name: user.name, email: user.email, role: user.role }}
-        organizations={organizations}
-        activeOrganizationId={user.activeOrganizationId}
-      >
-        {children}
-      </DashboardShell>
-    </>
+    <DashboardShell
+      isAdmin={user.role === 'ADMIN'}
+      user={{ name: user.name, email: user.email, role: user.role }}
+      organizations={organizations}
+      activeOrganizationId={user.activeOrganizationId}
+      banner={user.isImpersonated ? <ImpersonationBanner /> : null}
+    >
+      {children}
+    </DashboardShell>
   );
 }

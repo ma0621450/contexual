@@ -14,6 +14,7 @@ export default async function ChatPage() {
       models={models}
       initialFiles={files}
       isAdmin={user.role === 'ADMIN'}
+      firstName={user.name?.trim().split(/\s+/)[0] || 'there'}
     />
   );
 }

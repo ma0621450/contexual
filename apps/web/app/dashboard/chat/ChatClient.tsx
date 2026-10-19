@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -12,20 +13,17 @@ import {
   FolderIcon,
   HardDriveIcon,
   LoaderCircleIcon,
-  MessagesSquareIcon,
   PaperclipIcon,
   PanelLeftIcon,
   PencilIcon,
   PlusIcon,
-  RefreshCwIcon,
   SearchIcon,
-  SendIcon,
+  SparklesIcon,
   SquareIcon,
   Trash2Icon,
   TriangleAlertIcon,
   UploadIcon,
   XIcon,
-  GlobeIcon,
   PinIcon,
   ShareIcon,
   ArchiveRestoreIcon,
@@ -64,6 +62,10 @@ import type {
   StoredFile,
 } from '@/lib/api/server';
 import { waitForFileTerminal } from '@/lib/files';
+import { useVoice } from '@/lib/voice/use-voice';
+
+const chatColumnClass =
+  'mx-auto w-full min-w-0 max-w-[min(100%,90rem)] px-[clamp(1rem,3vw,2.5rem)] transition-[max-width,padding] duration-300 ease-out';
 import { cn } from '@/lib/utils';
 import { CanvasModal, CanvasSidePanel } from '@/components/chat/CanvasPanel';
 import { MessageRow } from '@/components/chat/MessageRow';
@@ -86,8 +88,13 @@ import {
 } from '@/components/ui/dialog';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ChatShareDialog } from '@/components/chat/ChatShareDialog';
@@ -110,14 +117,16 @@ const PROVIDER_LABELS: Record<string, string> = {
   XAI: 'xAI',
 };
 
-const SUGGESTIONS = [
-  'Help me with my project',
-  'Compare three pricing plans in a clean markdown table',
-  'Quiz me with 3 multiple-choice questions on TypeScript',
-  'Show your reasoning, then explain recursion with a short example',
-  'Build a small HTML + CSS card preview I can open in canvas',
-  'Draw a mermaid flowchart for user signup',
-];
+function chatDayBucket(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'Earlier';
+  const startOf = (value: Date) =>
+    new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const diff = startOf(new Date()) - startOf(date);
+  if (diff <= 0) return 'Today';
+  if (diff === 86_400_000) return 'Yesterday';
+  return 'Earlier';
+}
 
 type MessageUsage = {
   promptTokens: number;
@@ -147,6 +156,7 @@ type ChatClientProps = {
   models: ProviderModel[];
   initialFiles: StoredFile[];
   isAdmin: boolean;
+  firstName?: string;
   initialConversationId?: string | null;
   initialDetail?: ConversationDetail | null;
   readOnly?: boolean;
@@ -158,13 +168,23 @@ type ChatAttachment = {
   filename: string;
   mimeType: string;
   sizeBytes: number;
+  previewUrl?: string;
 };
 
 type PendingUpload = {
   key: string;
   filename: string;
   stage: 'uploading' | 'processing';
+  previewUrl?: string;
 };
+
+function isImageAttachment(file: { mimeType?: string; filename?: string; previewUrl?: string }) {
+  return (
+    Boolean(file.previewUrl) ||
+    Boolean(file.mimeType?.startsWith('image/')) ||
+    /\.(png|jpe?g|gif|webp)$/i.test(file.filename ?? '')
+  );
+}
 
 export function ChatClient({
   initialConversations,
@@ -174,6 +194,7 @@ export function ChatClient({
   models,
   initialFiles,
   isAdmin,
+  firstName = 'there',
   initialConversationId = null,
   initialDetail = null,
   readOnly = false,
@@ -184,6 +205,8 @@ export function ChatClient({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
+  const inputRef = useRef('');
+  inputRef.current = input;
   const enabledModelIds = useMemo(() => {
     const ids = new Set<string>();
     for (const connection of connectedProviders ?? []) {
@@ -245,6 +268,10 @@ export function ChatClient({
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(
+    !publicView && initialConversations.length > 0,
+  );
+  const [creatingProject, setCreatingProject] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [error, setError] = useState('');
   const [failedMessage, setFailedMessage] = useState('');
@@ -289,8 +316,12 @@ export function ChatClient({
   const [shareExpiry, setShareExpiry] = useState<'1h' | '24h' | '7d' | 'never'>(
     'never',
   );
-  const [listening, setListening] = useState(false);
-  const recognitionRef = useRef<{ stop: () => void } | null>(null);
+  const voice = useVoice({
+    getText: () => inputRef.current,
+    setText: setInput,
+    setError,
+    enabled: providerConnected && !readOnly && !sending,
+  });
   const router = useRouter();
   const skipUrlResetRef = useRef(
     Boolean(initialConversationId || initialDetail),
@@ -301,6 +332,7 @@ export function ChatClient({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sidebarSearchRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const cancelledUploads = useRef(new Set<string>());
   const uploading = pendingUploads.length > 0;
   const activeConversation = conversations.find((item) => item.id === activeId);
   const activeProject = folders.find((item) => item.id === activeProjectId);
@@ -510,6 +542,8 @@ export function ChatClient({
       router.push('/dashboard/chat');
       return;
     }
+    voice.stopListening();
+    voice.cancelReply();
     abortRef.current?.abort();
     abortRef.current = null;
     setActiveId(null);
@@ -518,6 +552,9 @@ export function ChatClient({
     setInstructions('');
     setLiveTools([]);
     setCitations([]);
+    for (const item of attachments) {
+      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    }
     setAttachments([]);
     setError('');
     setFailedMessage('');
@@ -550,88 +587,6 @@ export function ChatClient({
     }
   }
 
-  function toggleDictation() {
-    const SpeechRecognitionCtor =
-      typeof window !== 'undefined'
-        ? (
-            window as Window & {
-              SpeechRecognition?: new () => {
-                lang: string;
-                interimResults: boolean;
-                continuous: boolean;
-                start: () => void;
-                stop: () => void;
-                onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
-                onend: (() => void) | null;
-                onerror: (() => void) | null;
-              };
-              webkitSpeechRecognition?: new () => {
-                lang: string;
-                interimResults: boolean;
-                continuous: boolean;
-                start: () => void;
-                stop: () => void;
-                onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
-                onend: (() => void) | null;
-                onerror: (() => void) | null;
-              };
-            }
-          ).SpeechRecognition ||
-          (
-            window as Window & {
-              webkitSpeechRecognition?: new () => {
-                lang: string;
-                interimResults: boolean;
-                continuous: boolean;
-                start: () => void;
-                stop: () => void;
-                onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
-                onend: (() => void) | null;
-                onerror: (() => void) | null;
-              };
-            }
-          ).webkitSpeechRecognition
-        : undefined;
-
-    if (!SpeechRecognitionCtor) {
-      setError('Voice input is not supported in this browser.');
-      return;
-    }
-
-    if (listening) {
-      recognitionRef.current?.stop();
-      setListening(false);
-      return;
-    }
-
-    const recognition = new SpeechRecognitionCtor();
-    recognition.lang = 'en-US';
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map((result) => result[0]?.transcript ?? '')
-        .join(' ')
-        .trim();
-      if (transcript) {
-        setInput((previous) =>
-          previous ? `${previous.trim()} ${transcript}` : transcript,
-        );
-      }
-    };
-    recognition.onend = () => {
-      setListening(false);
-      recognitionRef.current = null;
-    };
-    recognition.onerror = () => {
-      setListening(false);
-      recognitionRef.current = null;
-    };
-    recognitionRef.current = recognition;
-    setListening(true);
-    recognition.start();
-  }
-
   function openProjectSettings() {
     if (!activeProject) return;
     setProjectInstructions(activeProject.instructions ?? '');
@@ -641,19 +596,28 @@ export function ChatClient({
   }
 
   function stopGeneration() {
+    voice.cancelReply();
     abortRef.current?.abort();
   }
 
   async function handleSend(event: React.FormEvent) {
     event.preventDefault();
-    const content =
-      input.trim() ||
-      (attachments.length ? 'Please review the attached file.' : '');
+    let content = input.trim();
+    if (voice.listening) {
+      const stopped = voice.stopListening();
+      if (stopped.pendingTranscription) return;
+      content = stopped.text.trim() || content;
+    }
+    content = content || (attachments.length ? 'Please review the attached file.' : '');
     await sendMessage(content);
   }
 
   async function sendMessage(content: string) {
     if (!content || sending) return;
+
+    const speakReply = voice.armReply() && !compareModel;
+    if (speakReply) voice.beginReply();
+    else voice.cancelReply();
 
     setError('');
     setFailedMessage('');
@@ -825,6 +789,7 @@ export function ChatClient({
           }
 
           if (event.type === 'token') {
+            if (speakReply) voice.pushReply(event.content);
             setMessages((prev) => {
               const targetId =
                 prev.find((item) => item.id.startsWith('temp-compare'))?.id ??
@@ -838,6 +803,9 @@ export function ChatClient({
           }
 
           if (event.type === 'done') {
+            if (speakReply && event.message.metadata?.compareSlot !== 1) {
+              voice.finishReply();
+            }
             setActiveLeafId(event.message.id);
             setMessages((prev) =>
               prev.map((message) => {
@@ -888,6 +856,7 @@ export function ChatClient({
       );
 
       if (!result.ok) {
+        voice.cancelReply();
         if (result.aborted) {
           setMessages((prev) => {
             const assistant = prev.find((m) => m.id === streamingAssistantId);
@@ -918,8 +887,13 @@ export function ChatClient({
           );
           setInput(outgoingContent);
         }
+      } else {
+        for (const item of outgoingAttachments) {
+          if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        }
       }
     } catch {
+      voice.cancelReply();
       setError('Unable to send message. Check your connection.');
       setFailedMessage(outgoingContent);
       setAttachments(outgoingAttachments);
@@ -1247,9 +1221,12 @@ export function ChatClient({
     await Promise.all(
       selected.map(async (file) => {
         const key = createTempId(`upload-${file.name}-${file.size}`);
+        const previewUrl = file.type.startsWith('image/')
+          ? URL.createObjectURL(file)
+          : undefined;
         setPendingUploads((current) => [
           ...current,
-          { key, filename: file.name, stage: 'uploading' },
+          { key, filename: file.name, stage: 'uploading', previewUrl },
         ]);
 
         try {
@@ -1260,6 +1237,7 @@ export function ChatClient({
             body: form,
           });
           if (!result.ok) {
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
             setError(result.error);
             return;
           }
@@ -1275,6 +1253,7 @@ export function ChatClient({
           );
           const processed = await waitForFileTerminal(result.data);
           if (!processed.ok) {
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
             setError(
               processed.file?.failureMessage ??
                 processed.error ??
@@ -1283,6 +1262,7 @@ export function ChatClient({
             return;
           }
           if (processed.file.processingStatus !== 'READY') {
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
             setError(
               processed.file.failureMessage ??
                 'The file could not be processed.',
@@ -1290,6 +1270,10 @@ export function ChatClient({
             return;
           }
 
+          if (cancelledUploads.current.has(key)) {
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+            return;
+          }
           setLibraryFiles((current) =>
             current.map((item) =>
               item.id === processed.file.id ? processed.file : item,
@@ -1303,6 +1287,7 @@ export function ChatClient({
                 filename: processed.file.filename,
                 mimeType: processed.file.mimeType,
                 sizeBytes: processed.file.sizeBytes,
+                previewUrl,
               },
             ].slice(0, MAX_ATTACHMENTS),
           );
@@ -1498,7 +1483,6 @@ export function ChatClient({
         key={conversation.id}
         className={cn(
           'group flex items-center gap-1 rounded-lg pr-1 transition-colors',
-          activeId === conversation.id ? 'bg-accent' : 'hover:bg-muted/70',
         )}
       >
         {renamingId === conversation.id ? (
@@ -1536,31 +1520,22 @@ export function ChatClient({
                 void openConversation(conversation.id);
               }}
               aria-label={conversation.title}
+              title={
+                searching && projectName
+                  ? `${projectName} · ${formatRelativeTime(conversation.updatedAt)}`
+                  : formatRelativeTime(conversation.updatedAt)
+              }
               className={cn(
-                'min-w-0 flex-1 rounded-lg px-3 py-2 text-left transition-colors',
+                'min-w-0 flex-1 rounded-lg px-3 py-1.5 text-left text-[13px] leading-5 transition-colors',
                 activeId === conversation.id
-                  ? 'text-accent-foreground'
-                  : 'text-foreground',
+                  ? 'bg-white/10 font-medium text-white'
+                  : 'text-[#a1a1aa] hover:bg-white/[0.04] hover:text-white',
               )}
             >
-              <span
-                className={cn(
-                  'block truncate text-sm',
-                  activeId === conversation.id && 'font-medium',
-                )}
-              >
+              <span className="block truncate">
+                {conversation.pinnedAt ? 'Pinned · ' : ''}
                 {conversation.title}
               </span>
-              <span className="block truncate text-[11px] text-muted-foreground">
-                {conversation.pinnedAt ? 'Pinned · ' : ''}
-                {searching && projectName ? `${projectName} · ` : ''}
-                {formatRelativeTime(conversation.updatedAt)}
-              </span>
-              {conversation.snippet ? (
-                <span className="block truncate text-[11px] text-muted-foreground/80">
-                  {conversation.snippet}
-                </span>
-              ) : null}
             </button>
             {folders.length ? (
               <DropdownMenu>
@@ -1668,6 +1643,45 @@ export function ChatClient({
       </div>
     );
   }
+
+  function toggleHistory() {
+    if (window.matchMedia('(min-width: 768px)').matches) {
+      setHistoryOpen((open) => !open);
+    } else {
+      setSidebarOpen((open) => !open);
+    }
+  }
+
+  const historyCluster = (label: string) => (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={startNewChat}
+        className="flex h-10 min-w-0 flex-1 items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm whitespace-nowrap text-white transition hover:bg-white/[0.06]"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <PlusIcon className="size-4 shrink-0" />
+          <span className="truncate">{label}</span>
+        </span>
+        <kbd className="inline-flex shrink-0 items-center gap-1 rounded-md border border-white/15 px-1.5 py-0.5 text-[11px] text-[#a1a1aa]">
+          ⌘ N
+        </kbd>
+      </button>
+      <button
+        type="button"
+        aria-label={
+          historyOpen || sidebarOpen
+            ? 'Hide conversation list'
+            : 'Show conversation list'
+        }
+        aria-pressed={historyOpen || sidebarOpen}
+        onClick={toggleHistory}
+        className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-white transition hover:bg-white/[0.06]"
+      >
+        <PanelLeftIcon className="size-4" />
+      </button>
+    </div>
+  );
 
   const conversationList = (
     <>
@@ -1785,110 +1799,145 @@ export function ChatClient({
             </Button>
           </div>
         ) : null}
-        <Button onClick={startNewChat} className="w-full justify-start gap-2">
-          <PlusIcon className="size-4" />
-          {activeProject ? 'New chat in project' : 'New chat'}
-        </Button>
+        {historyCluster(activeProject ? 'New chat in project' : 'New Chat')}
         <div className="relative">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-[#737373]" />
           <Input
             ref={sidebarSearchRef}
             value={sidebarSearch}
             onChange={(event) => setSidebarSearch(event.target.value)}
-            placeholder={
-              activeProject ? 'Search in project…' : 'Search chats…'
-            }
+            placeholder="Search anything..."
             aria-label="Search conversations"
-            className="h-8 pl-8 text-xs"
+            className="h-9 rounded-xl border-white/10 bg-transparent pr-10 pl-8 text-xs"
           />
+          <kbd className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-[11px] text-[#737373]">
+            ⌘K
+          </kbd>
         </div>
+      </div>
+      <nav className="flex-1 space-y-4 overflow-y-auto px-3 pb-3">
+        {!activeProject && !searching ? (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between px-2">
+              <p className="text-[11px] font-medium tracking-[0.08em] text-[#737373] uppercase">
+                Projects
+              </p>
+              <button
+                type="button"
+                aria-label="New project"
+                className="rounded-md p-1 text-[#737373] hover:bg-white/10 hover:text-white"
+                onClick={() => setCreatingProject(true)}
+              >
+                <PlusIcon className="size-3.5" />
+              </button>
+            </div>
+            {folders.map((folder) => (
+              <button
+                key={folder.id}
+                type="button"
+                onClick={() => enterProject(folder.id)}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm',
+                  activeProjectId === folder.id
+                    ? 'bg-white/10 text-white'
+                    : 'text-[#d4d4d4] hover:bg-white/[0.04]',
+                )}
+              >
+                <FolderIcon className="size-4 shrink-0 text-[#a1a1aa]" />
+                <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+              </button>
+            ))}
+            {creatingProject ? (
+              <form
+                className="flex gap-1 px-1 pt-1"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const name = folderDraft.trim();
+                  if (!name) return;
+                  void createChatFolder(name).then((result) => {
+                    if (!result.ok) {
+                      setError(result.error);
+                      return;
+                    }
+                    setFolders((prev) =>
+                      [...prev, result.data].sort((left, right) =>
+                        left.name.localeCompare(right.name),
+                      ),
+                    );
+                    setFolderDraft('');
+                    setCreatingProject(false);
+                    enterProject(result.data.id, result.data.name);
+                  });
+                }}
+              >
+                <Input
+                  value={folderDraft}
+                  onChange={(event) => setFolderDraft(event.target.value)}
+                  placeholder="New project"
+                  aria-label="New project name"
+                  className="h-8 text-xs"
+                  autoFocus
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setCreatingProject(false);
+                  }}
+                />
+                <Button type="submit" size="icon" className="size-8 shrink-0">
+                  <PlusIcon className="size-3.5" />
+                </Button>
+              </form>
+            ) : null}
+          </div>
+        ) : null}
+        {visibleConversations.length === 0 ? (
+          <p className="px-2 py-6 text-center text-sm text-[#737373]">
+            {searching
+              ? 'No matching chats.'
+              : activeProject
+                ? 'No chats in this project yet.'
+                : 'No conversations yet.'}
+          </p>
+        ) : searching ? (
+          <div className="space-y-0.5">
+            {visibleConversations.map((conversation) =>
+              conversationRow(conversation),
+            )}
+          </div>
+        ) : (
+          <>
+            {visibleConversations.some((item) => item.pinnedAt) ? (
+              <div className="space-y-0.5">
+                <p className="px-2 text-[11px] font-medium tracking-[0.08em] text-[#737373] uppercase">
+                  Pinned
+                </p>
+                {visibleConversations
+                  .filter((item) => item.pinnedAt)
+                  .map((conversation) => conversationRow(conversation))}
+              </div>
+            ) : null}
+            {(['Today', 'Yesterday', 'Earlier'] as const).map((label) => {
+              const items = visibleConversations.filter(
+                (item) =>
+                  !item.pinnedAt && chatDayBucket(item.updatedAt) === label,
+              );
+              if (!items.length) return null;
+              return (
+                <div key={label} className="space-y-0.5">
+                  <p className="px-2 text-[11px] font-medium tracking-[0.08em] text-[#737373] uppercase">
+                    {label}
+                  </p>
+                  {items.map((conversation) => conversationRow(conversation))}
+                </div>
+              );
+            })}
+          </>
+        )}
         <button
           type="button"
           onClick={() => setShowArchived((value) => !value)}
-          className="w-full rounded-md px-2 py-1 text-left text-[11px] text-muted-foreground hover:bg-muted"
+          className="px-2 text-left text-[11px] text-[#737373] hover:text-white"
         >
-          {showArchived ? 'Show active chats' : 'Show archived chats'}
+          {showArchived ? 'Show active chats' : 'Archived'}
         </button>
-      </div>
-      <nav className="flex-1 space-y-3 overflow-y-auto px-2 pb-3">
-        {!activeProject && !searching ? (
-          <div className="space-y-1">
-            <p className="px-2 pt-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-              Projects
-            </p>
-            {folders.map((folder) => {
-              const count = conversations.filter(
-                (item) => item.folderId === folder.id,
-              ).length;
-              return (
-                <button
-                  key={folder.id}
-                  type="button"
-                  onClick={() => enterProject(folder.id)}
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted/70"
-                >
-                  <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate">{folder.name}</span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-            <form
-              className="flex gap-1 px-1 pt-1"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const name = folderDraft.trim();
-                if (!name) return;
-                void createChatFolder(name).then((result) => {
-                  if (!result.ok) {
-                    setError(result.error);
-                    return;
-                  }
-                  setFolders((prev) =>
-                    [...prev, result.data].sort((left, right) =>
-                      left.name.localeCompare(right.name),
-                    ),
-                  );
-                  setFolderDraft('');
-                  enterProject(result.data.id, result.data.name);
-                });
-              }}
-            >
-              <Input
-                value={folderDraft}
-                onChange={(event) => setFolderDraft(event.target.value)}
-                placeholder="New project"
-                aria-label="New project name"
-                className="h-8 text-xs"
-              />
-              <Button type="submit" size="icon" className="size-8 shrink-0">
-                <PlusIcon className="size-3.5" />
-              </Button>
-            </form>
-          </div>
-        ) : null}
-        <div className="space-y-0.5">
-          {!activeProject && !searching ? (
-            <p className="px-2 pt-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-              Chats
-            </p>
-          ) : null}
-          {visibleConversations.length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-              {searching
-                ? 'No matching chats.'
-                : activeProject
-                  ? 'No chats in this project yet.'
-                  : 'No conversations yet.'}
-            </p>
-          ) : (
-            visibleConversations.map((conversation) =>
-              conversationRow(conversation),
-            )
-          )}
-        </div>
       </nav>
     </>
   );
@@ -1897,12 +1946,20 @@ export function ChatClient({
     <div
       className={cn(
         'flex w-full overflow-hidden',
-        publicView ? 'h-screen' : 'h-[calc(100vh-4rem)]',
+        publicView ? 'h-screen' : 'h-full',
       )}
     >
       {!publicView ? (
-        <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
-          {conversationList}
+        <aside
+          className={cn(
+            'hidden shrink-0 overflow-hidden transition-[width,padding] duration-300 ease-out md:flex',
+            historyOpen ? 'w-[292px] p-3' : 'w-0 p-0',
+          )}
+          aria-hidden={!historyOpen}
+        >
+          <div className="flex h-full min-h-0 w-[268px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+            {conversationList}
+          </div>
         </aside>
       ) : null}
 
@@ -1914,7 +1971,7 @@ export function ChatClient({
             onClick={() => setSidebarOpen(false)}
             className="absolute inset-0 bg-foreground/25 backdrop-blur-[2px]"
           />
-          <aside className="relative flex h-full w-72 max-w-[85%] flex-col border-r border-border bg-sidebar shadow-elevated">
+          <aside className="relative flex h-full w-72 max-w-[85%] flex-col border-r border-white/10 bg-[#111111] shadow-elevated">
             {conversationList}
           </aside>
         </div>
@@ -1944,6 +2001,17 @@ export function ChatClient({
           void uploadFiles(Array.from(event.dataTransfer.files));
         }}
       >
+        {messages.length === 0 && !readOnly ? (
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-[460px] overflow-hidden">
+            <div className="absolute top-[-120px] left-1/2 h-[320px] w-[78%] -translate-x-1/2 bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.18),transparent_68%)]" />
+            <img
+              src="/brand/stars-workspace.svg"
+              alt=""
+              className="absolute inset-x-0 top-0 h-[280px] w-full object-cover opacity-70"
+            />
+          </div>
+        ) : null}
+
         {dragActive ? (
           <div className="pointer-events-none absolute inset-4 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-background/90 backdrop-blur-sm">
             <div className="flex flex-col items-center gap-2 text-center">
@@ -1952,33 +2020,20 @@ export function ChatClient({
               </span>
               <p className="font-medium">Drop files to add them to this chat</p>
               <p className="text-sm text-muted-foreground">
-                PDF, DOCX, TXT, Markdown, CSV, or JSON
+                PNG, JPEG, GIF, WEBP, PDF, DOCX, TXT, Markdown, CSV, or JSON
               </p>
             </div>
           </div>
         ) : null}
 
-        <header className="flex items-center gap-2 border-b border-border bg-background/80 px-3 py-2.5 backdrop-blur-sm sm:px-4">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="md:hidden"
-            aria-label="Open conversation list"
-            onClick={() => setSidebarOpen(true)}
-          >
-            <PanelLeftIcon className="size-4" />
-          </Button>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-medium">
-              {activeConversation?.title ?? 'New chat'}
-            </h1>
-            <p className="truncate text-xs text-muted-foreground">
-              {activeProject
-                ? `${activeProject.name} · ${activeModelLabel}`
-                : activeModelLabel}
-            </p>
+        <header className="flex items-center justify-between gap-2 px-3 py-3 sm:px-4">
+          <h1 className="sr-only">
+            {activeConversation?.title ?? 'New chat'}
+          </h1>
+          <div className={cn(historyOpen && 'md:hidden')}>
+            {historyCluster('New Chat')}
           </div>
+          <div className="ml-auto flex items-center gap-1">
           {messages.length > 0 && !readOnly ? (
             <>
               <Button
@@ -2046,16 +2101,7 @@ export function ChatClient({
               <DownloadIcon className="size-4" />
             </Button>
           ) : null}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="md:hidden"
-            aria-label="New chat"
-            onClick={startNewChat}
-          >
-            <PlusIcon className="size-4" />
-          </Button>
+          </div>
         </header>
 
         {readOnly ? (
@@ -2099,11 +2145,22 @@ export function ChatClient({
         ) : null}
 
         <div
+          className={cn(
+            'flex min-h-0 w-full flex-1 flex-col',
+            messages.length === 0 &&
+              !loadingConversation &&
+              'items-center justify-center',
+          )}
+        >
+        <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="flex-1 overflow-y-auto scroll-smooth"
+          className={cn(
+            'overflow-y-auto scroll-smooth',
+            messages.length === 0 && !loadingConversation ? 'w-full' : 'flex-1',
+          )}
         >
-          <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
+          <div className={cn(chatColumnClass, 'py-6')}>
             {loadingConversation && messages.length === 0 ? (
               <div className="space-y-6">
                 {[0, 1, 2].map((row) => (
@@ -2118,44 +2175,49 @@ export function ChatClient({
                 ))}
               </div>
             ) : messages.length === 0 ? (
-              <div className="flex min-h-[50vh] flex-col items-center justify-center gap-5 text-center">
-                <span className="flex size-14 items-center justify-center rounded-2xl bg-accent text-accent-foreground">
-                  <MessagesSquareIcon className="size-7" />
-                </span>
-                <div>
-                  <p className="text-lg font-semibold">
-                    {readOnly
-                      ? 'Shared conversation'
-                      : 'How can I help you today?'}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {readOnly
-                      ? 'This shared conversation has no messages yet.'
-                      : activeProject
-                        ? `Start a chat inside ${activeProject.name}.`
-                        : 'Ask a question, or attach a file to chat about it.'}
-                  </p>
-                </div>
-                {!readOnly ? (
-                <div className="grid w-full max-w-xl gap-2 sm:grid-cols-2">
-                  {SUGGESTIONS.map((suggestion) => (
-                    <button
-                      key={suggestion}
-                      type="button"
-                      onClick={() => {
-                        void sendMessage(suggestion);
-                      }}
-                      disabled={!providerConnected || sending}
-                      className="rounded-xl border border-border bg-card px-3.5 py-3 text-left text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-60"
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
-                ) : null}
+              <div className="relative flex flex-col items-center justify-center gap-8 py-8 text-center">
+                {readOnly ? (
+                  <div>
+                    <p className="text-lg font-semibold">Shared conversation</p>
+                    <p className="mt-1 text-sm text-shell-muted">
+                      This shared conversation has no messages yet.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center">
+                    <span className="mb-6 flex size-[72px] items-center justify-center rounded-[22px] border border-white/10 bg-white/[0.04] shadow-[0_0_40px_rgba(255,255,255,0.08)]">
+                      <img
+                        src="/brand/logo-mark.svg"
+                        alt=""
+                        width={32}
+                        height={38}
+                      />
+                    </span>
+                    <h2 className="text-[32px] leading-10 font-semibold tracking-[-1.2px] text-white sm:text-[40px] sm:leading-[48px] sm:tracking-[-1.6px]">
+                      Hello, {firstName}
+                    </h2>
+                    <p className="mt-1 flex flex-wrap items-center justify-center gap-2 text-center text-[28px] leading-10 font-normal tracking-[-1px] text-[#a1a1aa] sm:text-[40px] sm:leading-[48px] sm:tracking-[-1.6px]">
+                      <span>How can</span>
+                      <img
+                        src="/brand/logo-mark.svg"
+                        alt=""
+                        width={34}
+                        height={40}
+                        className="rotate-12"
+                      />
+                      <span className="text-gradient-title font-semibold">We can</span>
+                      <span>help you?</span>
+                    </p>
+                    {activeProject ? (
+                      <p className="mt-2 text-[16px] leading-7 text-shell-muted">
+                        Start a chat inside {activeProject.name}.
+                      </p>
+                    ) : null}
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-8">
                 {liveTools.length || citations.length ? (
                   <div className="space-y-2 rounded-xl border border-border bg-muted/20 p-3">
                     {liveTools.map((tool) => (
@@ -2272,8 +2334,15 @@ export function ChatClient({
           </button>
         ) : null}
 
-        <div className="border-t border-border bg-background/80 backdrop-blur-sm">
-          <div className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6 sm:py-4">
+        <div
+          className={cn(
+            'w-full',
+            messages.length > 0 || loadingConversation
+              ? 'border-t border-shell-line'
+              : undefined,
+          )}
+        >
+          <div className={cn(chatColumnClass, 'py-3 sm:py-4')}>
             {error ? (
               <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 <p>{error}</p>
@@ -2295,25 +2364,105 @@ export function ChatClient({
                 This shared conversation is read-only.
               </p>
             ) : (
+            <>
+            {attachments.some(isImageAttachment) ||
+            pendingUploads.some((file) => file.previewUrl) ? (
+              <div className="relative z-10 mb-[-14px] flex flex-wrap justify-start gap-3 pl-4">
+                {attachments.filter(isImageAttachment).map((file) => (
+                  <div key={file.id} className="relative size-16">
+                    {file.previewUrl ? (
+                      <img
+                        src={file.previewUrl}
+                        alt=""
+                        className="size-16 rounded-[10px] border border-white/10 object-cover"
+                      />
+                    ) : (
+                      <span className="flex size-16 items-center justify-center rounded-[10px] border border-white/10 bg-white/[0.04] text-[10px] text-[#a1a1aa]">
+                        Image
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
+                        setAttachments((previous) =>
+                          previous.filter((item) => item.id !== file.id),
+                        );
+                      }}
+                      className="absolute -top-1.5 -right-1.5 flex size-5 items-center justify-center rounded-full border border-white/20 bg-[#2a2a2a] text-white shadow-sm hover:bg-[#3a3a3a]"
+                      title="Remove image"
+                      aria-label={`Remove ${file.filename}`}
+                    >
+                      <XIcon className="size-3" />
+                    </button>
+                  </div>
+                ))}
+                {pendingUploads
+                  .filter((file) => file.previewUrl)
+                  .map((file) => (
+                    <div key={file.key} className="relative size-16">
+                      <img
+                        src={file.previewUrl}
+                        alt=""
+                        className="size-16 rounded-[10px] border border-white/10 object-cover"
+                      />
+                      {file.stage !== 'uploading' ? null : (
+                        <span className="absolute inset-0 flex items-center justify-center rounded-[10px] bg-black/35">
+                          <LoaderCircleIcon className="size-4 animate-spin text-white" />
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          cancelledUploads.current.add(file.key);
+                          if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
+                          setPendingUploads((current) =>
+                            current.filter((item) => item.key !== file.key),
+                          );
+                        }}
+                        className="absolute -top-1.5 -right-1.5 flex size-5 items-center justify-center rounded-full border border-white/20 bg-[#2a2a2a] text-white shadow-sm hover:bg-[#3a3a3a]"
+                        title="Remove image"
+                        aria-label={`Remove ${file.filename}`}
+                      >
+                        <XIcon className="size-3" />
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            ) : null}
+            {voice.endedLabel ? (
+              <div className="mb-2 flex justify-center">
+                <button
+                  type="button"
+                  onClick={voice.dismissEnded}
+                  className="rounded-full border border-white/10 bg-[#1c1c1c] px-3 py-1.5 text-xs text-[#d4d4d8] hover:bg-white/10"
+                >
+                  {voice.endedLabel}
+                </button>
+              </div>
+            ) : null}
             <form
               onSubmit={handleSend}
-              className="rounded-2xl border border-border bg-card shadow-card transition-colors focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-ring/20"
+              className="rounded-[22px] border border-white/10 bg-[#161616] transition-colors focus-within:border-white/25"
             >
-              {attachments.length || pendingUploads.length ? (
-                <div className="flex flex-wrap gap-2 border-b border-border p-3">
-                  {attachments.map((file) => (
+              {attachments.some((file) => !isImageAttachment(file)) ||
+              pendingUploads.some((file) => !file.previewUrl) ? (
+                <div className="flex flex-wrap gap-2 border-b border-white/10 p-3">
+                  {attachments
+                    .filter((file) => !isImageAttachment(file))
+                    .map((file) => (
                     <div
                       key={file.id}
-                      className="flex min-w-0 max-w-64 items-center gap-2 rounded-lg border border-border bg-muted/50 px-2.5 py-2"
+                      className="flex min-w-0 max-w-64 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-2 text-white"
                     >
-                      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/10 text-white">
                         <FileIcon className="size-4" />
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-medium">
                           {file.filename}
                         </span>
-                        <span className="block text-[11px] text-muted-foreground">
+                        <span className="block text-[11px] text-[#a1a1aa]">
                           {formatFileSize(file.sizeBytes)} · Ready
                         </span>
                       </span>
@@ -2324,7 +2473,7 @@ export function ChatClient({
                             previous.filter((item) => item.id !== file.id),
                           )
                         }
-                        className="rounded p-1 text-muted-foreground transition hover:bg-background hover:text-foreground"
+                        className="rounded p-1 text-[#a1a1aa] transition hover:bg-white/10 hover:text-white"
                         title="Remove attachment"
                         aria-label={`Remove ${file.filename}`}
                       >
@@ -2332,19 +2481,21 @@ export function ChatClient({
                       </button>
                     </div>
                   ))}
-                  {pendingUploads.map((file) => (
+                  {pendingUploads
+                    .filter((file) => !file.previewUrl)
+                    .map((file) => (
                     <div
                       key={file.key}
-                      className="flex min-w-0 max-w-64 items-center gap-2 rounded-lg border border-border bg-muted/50 px-2.5 py-2"
+                      className="flex min-w-0 max-w-64 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-2 text-white"
                     >
-                      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/10 text-white">
                         <LoaderCircleIcon className="size-4 animate-spin" />
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-medium">
                           {file.filename}
                         </span>
-                        <span className="block text-[11px] text-muted-foreground">
+                        <span className="block text-[11px] text-[#a1a1aa]">
                           {file.stage === 'uploading'
                             ? 'Uploading…'
                             : 'Scanning and processing…'}
@@ -2358,7 +2509,7 @@ export function ChatClient({
               <Textarea
                 ref={textareaRef}
                 value={input}
-                onChange={(event) => setInput(event.target.value)}
+                onChange={(event) => voice.onComposerChange(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault();
@@ -2373,38 +2524,108 @@ export function ChatClient({
                   }
                 }}
                 rows={1}
-                placeholder="Message Promplex…"
+                placeholder="Describe what you want to build"
                 aria-label="Message"
-                className="max-h-50 min-h-11 resize-none rounded-none border-0 bg-transparent px-4 py-3 shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+                className="max-h-50 min-h-[72px] resize-none rounded-none border-0 bg-transparent px-4 pt-4 shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
                 disabled={sending || !providerConnected}
               />
 
-              <div className="flex items-center gap-2 px-2.5 pb-2.5">
-                <Button
+              {voice.listening ? (
+                <p className="px-4 pt-3 text-xs text-[#a1a1aa]" role="status">
+                  Listening. Speak naturally, then send.
+                </p>
+              ) : null}
+              {voice.speaking ? (
+                <p className="px-4 pt-3 text-xs text-[#a1a1aa]" role="status">
+                  Speaking the reply. The microphone interrupts it.
+                </p>
+              ) : null}
+              <div className="flex items-center gap-2 px-3 pb-3">
+                <button
                   type="button"
-                  variant={listening ? 'default' : 'ghost'}
-                  size="icon"
-                  className="shrink-0"
+                  className={cn(
+                    'flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-white/80 transition hover:bg-white/10 disabled:pointer-events-none disabled:opacity-40',
+                    voice.listening && 'border-white/40 bg-white/15 text-white',
+                    voice.speaking && 'animate-pulse',
+                  )}
                   disabled={sending || !providerConnected}
-                  title={listening ? 'Stop listening' : 'Voice input'}
-                  aria-label={listening ? 'Stop voice input' : 'Start voice input'}
-                  onClick={toggleDictation}
+                  aria-pressed={voice.listening}
+                  title={
+                    voice.listening
+                      ? 'Stop voice input'
+                      : voice.speaking
+                        ? 'Stop speaking and listen'
+                        : 'Voice input'
+                  }
+                  aria-label={
+                    voice.listening
+                      ? 'Stop voice input'
+                      : voice.speaking
+                        ? 'Stop speaking and listen'
+                        : 'Start voice input'
+                  }
+                  onClick={voice.toggle}
                 >
-                  <MicIcon className="size-4" />
-                </Button>
+                  <MicIcon className="size-3.5" />
+                </button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button
+                    <button
                       type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="shrink-0"
+                      className="flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-white/80 transition hover:bg-white/10 disabled:pointer-events-none disabled:opacity-40"
+                      disabled={sending}
+                      aria-label="Chat tools"
+                      title="Web search and compare"
+                    >
+                      <SlidersHorizontalIcon className="size-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" side="top" className="w-56">
+                    <DropdownMenuCheckboxItem
+                      checked={webSearch}
+                      onCheckedChange={(checked) => {
+                        setWebSearch(checked);
+                        if (activeId) {
+                          void updateConversation(activeId, {
+                            webSearchEnabled: checked,
+                          });
+                        }
+                      }}
+                    >
+                      Web search
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>Compare</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={compareModel || 'none'}
+                      onValueChange={(value) =>
+                        setCompareModel(value === 'none' ? '' : value)
+                      }
+                    >
+                      <DropdownMenuRadioItem value="none">
+                        No compare
+                      </DropdownMenuRadioItem>
+                      {availableModels
+                        .filter((item) => item.id !== model)
+                        .map((item) => (
+                          <DropdownMenuRadioItem key={item.id} value={item.id}>
+                            vs {item.label}
+                          </DropdownMenuRadioItem>
+                        ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-white/80 transition hover:bg-white/10 disabled:pointer-events-none disabled:opacity-40"
                       disabled={sending || attachmentsFull}
                       title="Add files"
                       aria-label="Add files"
                     >
-                      <PaperclipIcon className="size-4" />
-                    </Button>
+                      <PaperclipIcon className="size-3.5" />
+                    </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" side="top" className="w-52">
                     <DropdownMenuItem
@@ -2423,7 +2644,7 @@ export function ChatClient({
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  accept=".txt,.md,.csv,.json,.pdf,.docx,text/plain,text/markdown,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  accept=".png,.jpg,.jpeg,.gif,.webp,.txt,.md,.csv,.json,.pdf,.docx,image/png,image/jpeg,image/gif,image/webp,text/plain,text/markdown,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   disabled={sending || attachmentsFull}
                   onChange={(event) => {
                     void uploadFiles(Array.from(event.target.files ?? []));
@@ -2439,7 +2660,7 @@ export function ChatClient({
                 >
                   <SelectTrigger
                     size="sm"
-                    className="w-36 shrink-0 border-0 bg-muted/60 shadow-none sm:w-48 dark:bg-muted/60"
+                    className="ml-auto h-8 w-auto max-w-[9.5rem] shrink-0 rounded-full border border-white/15 bg-transparent px-3 text-xs shadow-none"
                     aria-label="Chat model"
                   >
                     <SelectValue placeholder="Select model" />
@@ -2461,65 +2682,6 @@ export function ChatClient({
                   </SelectContent>
                 </Select>
 
-                <Button
-                  type="button"
-                  variant={webSearch ? 'default' : 'outline'}
-                  size="sm"
-                  className={cn(
-                    'shrink-0 gap-1.5 px-2.5',
-                    webSearch && 'ring-2 ring-primary/30',
-                    !webSearch && 'text-muted-foreground',
-                  )}
-                  aria-pressed={webSearch}
-                  aria-label={
-                    webSearch ? 'Web search enabled' : 'Enable web search'
-                  }
-                  title={webSearch ? 'Web search is on' : 'Search the web'}
-                  onClick={() => {
-                    const next = !webSearch;
-                    setWebSearch(next);
-                    if (activeId) {
-                      void updateConversation(activeId, {
-                        webSearchEnabled: next,
-                      });
-                    }
-                  }}
-                >
-                  <GlobeIcon className="size-3.5" />
-                  <span className="hidden sm:inline">
-                    {webSearch ? 'Search on' : 'Search'}
-                  </span>
-                </Button>
-                <Select
-                  value={compareModel || 'none'}
-                  onValueChange={(value) =>
-                    setCompareModel(value === 'none' ? '' : value)
-                  }
-                  disabled={sending || availableModels.length < 2}
-                >
-                  <SelectTrigger
-                    size="sm"
-                    className="w-32 shrink-0 border-0 bg-muted/60 shadow-none sm:w-40 dark:bg-muted/60"
-                    aria-label="Compare with"
-                  >
-                    <SelectValue placeholder="Compare" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No compare</SelectItem>
-                    {availableModels
-                      .filter((item) => item.id !== model)
-                      .map((item) => (
-                        <SelectItem key={item.id} value={item.id}>
-                          vs {item.label}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-
-                <span className="ml-auto hidden text-[11px] text-muted-foreground sm:block">
-                  Enter to send · Esc to stop · Ctrl+K search · Ctrl+Shift+E export
-                </span>
-
                 {sending ? (
                   <Button
                     type="button"
@@ -2536,17 +2698,19 @@ export function ChatClient({
                   <Button
                     type="submit"
                     size="icon"
-                    className="shrink-0 rounded-full"
+                    className="size-8 shrink-0 rounded-full border border-white/15 bg-white/10 text-white hover:bg-white/20"
                     disabled={!canSend}
                     aria-label="Send message"
                   >
-                    <SendIcon className="size-4" />
+                    <SparklesIcon className="size-3.5" />
                   </Button>
                 )}
               </div>
             </form>
+            </>
             )}
           </div>
+        </div>
         </div>
       </section>
 

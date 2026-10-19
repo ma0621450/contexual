@@ -7,6 +7,12 @@ import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api/client';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 
+export function signOut() {
+  return apiFetch<{ ok: true }>('/auth/logout', { method: 'POST' }).catch(
+    () => ({ ok: false as const, error: 'Unable to reach server' }),
+  );
+}
+
 export function LogoutButton() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -16,9 +22,7 @@ export function LogoutButton() {
     if (loading) return;
     setLoading(true);
 
-    const result = await apiFetch<{ ok: true }>('/auth/logout', {
-      method: 'POST',
-    }).catch(() => ({ ok: false as const, error: 'Unable to reach server' }));
+    const result = await signOut();
 
     if (result.ok) {
       router.replace('/login');

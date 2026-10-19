@@ -13,15 +13,7 @@ import type {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
 import {
   Select,
   SelectContent,
@@ -50,6 +42,12 @@ type UsageClientProps = {
 
 const PLANS = ['FREE', 'STARTER', 'PRO', 'BUSINESS'] as const;
 const PAID_PLANS = ['STARTER', 'PRO', 'BUSINESS'] as const;
+const PLAN_LABEL: Record<(typeof PLANS)[number], string> = {
+  FREE: 'Free',
+  STARTER: 'Starter',
+  PRO: 'Pro',
+  BUSINESS: 'Business',
+};
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -75,12 +73,14 @@ export function UsageClient({
   const [tokenLimitDrafts, setTokenLimitDrafts] = useState<
     Record<string, string>
   >({});
-  const [organizationSpendLimit, setOrganizationSpendLimit] = useState(
-    String((usage?.organizationLimits?.monthlySpendLimitCents ?? 0) / 100),
-  );
-  const [organizationTokenLimit, setOrganizationTokenLimit] = useState(
-    String(usage?.organizationLimits?.monthlyTokenLimit ?? 0),
-  );
+  const [organizationSpendLimit, setOrganizationSpendLimit] = useState(() => {
+    const cents = usage?.organizationLimits?.monthlySpendLimitCents ?? 0;
+    return cents > 0 ? String(cents / 100) : '';
+  });
+  const [organizationTokenLimit, setOrganizationTokenLimit] = useState(() => {
+    const tokens = usage?.organizationLimits?.monthlyTokenLimit ?? 0;
+    return tokens > 0 ? String(tokens) : '';
+  });
 
   const stripeEnabled = billing?.stripeConfigured ?? false;
 
@@ -232,9 +232,12 @@ export function UsageClient({
   }
 
   async function saveOrganizationLimits() {
-    const spendDollars = Number(organizationSpendLimit);
-    const monthlyTokenLimit = Number(organizationTokenLimit);
+    const spendDollars =
+      organizationSpendLimit.trim() === '' ? 0 : Number(organizationSpendLimit);
+    const monthlyTokenLimit =
+      organizationTokenLimit.trim() === '' ? 0 : Number(organizationTokenLimit);
     if (
+      !Number.isFinite(spendDollars) ||
       spendDollars < 0 ||
       !Number.isInteger(monthlyTokenLimit) ||
       monthlyTokenLimit < 0
@@ -273,13 +276,27 @@ export function UsageClient({
     },
   ].filter(({ used, limit }) => limit > 0 && used / limit >= 0.8);
 
+  const tokensUsed = isAdmin
+    ? (usage?.organizationLimits?.monthlyTokensUsed ?? 0)
+    : (myUsage?.usage.tokensUsed ?? 0);
+  const tokenLimit = isAdmin
+    ? (usage?.organizationLimits?.monthlyTokenLimit ?? 0)
+    : (myUsage?.limits.tokenLimit ?? 0);
+  const estimatedCents = isAdmin
+    ? (usage?.totals.estimatedCostCents ?? 0)
+    : (myUsage?.usage.estimatedCostCents ?? 0);
+  const creditsLeft =
+    tokenLimit && tokenLimit > 0
+      ? Math.max(0, Math.round((1 - tokensUsed / tokenLimit) * 100))
+      : null;
+
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-      <div className="mb-6">
-        <h2 className="text-xl font-semibold tracking-tight">
+    <div className="mx-auto w-full max-w-[1070px] px-4 pt-8 pb-10 sm:px-6">
+      <div>
+        <h1 className="text-[30px] leading-9 font-semibold tracking-[-0.6px] text-white">
           {isAdmin ? 'Usage & billing' : 'My usage'}
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+        </h1>
+        <p className="mt-1 text-sm text-[#a1a1aa]">
           {isAdmin
             ? 'Track this month’s AI spend and manage plan and member limits.'
             : 'Track your AI spend and token usage for the current month.'}
@@ -297,42 +314,46 @@ export function UsageClient({
         </p>
       ) : null}
 
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>My usage</CardTitle>
-          <CardDescription>
-            Current monthly usage and limits. A limit of 0 means unlimited.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-3">
-          <div>
-            <p className="text-sm text-muted-foreground">Estimated cost</p>
-            <p className="mt-1 text-2xl font-semibold">
-              {formatCents(myUsage?.usage.estimatedCostCents ?? 0)}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {formatCents(myUsage?.usage.spendUsedCents ?? 0)} of{' '}
-              {formatCents(myUsage?.limits.spendLimitCents ?? 0)}
+      <section className="mt-8">
+        <h2 className="text-[18px] font-semibold text-white">
+          {isAdmin ? 'Subscription' : 'My usage'}
+        </h2>
+        <p className="mt-1 text-sm text-[#8b8b93]">
+          Current monthly usage and limits. A limit of 0 means unlimited.
+        </p>
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-5 sm:px-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <span className="inline-flex h-6 items-center rounded-full bg-white/10 px-2.5 text-xs text-white">
+              {PLAN_LABEL[overview?.planTier ?? billing?.planTier ?? 'FREE']}
+            </span>
+            {billing?.subscriptionStatus ? (
+              <span className="text-xs text-[#8b8b93]">
+                Subscription {billing.subscriptionStatus}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-6">
+            <div className="flex items-center gap-4">
+              <UsageRing percent={creditsLeft} />
+              <div>
+                <p className="text-[28px] leading-8 font-semibold tracking-[-0.5px] text-white">
+                  {creditsLeft === null ? 'Unlimited' : `${creditsLeft}% credits left`}
+                </p>
+                <p className="mt-1 text-sm text-[#a1a1aa]">
+                  {tokensUsed.toLocaleString()} /{' '}
+                  {tokenLimit && tokenLimit > 0
+                    ? tokenLimit.toLocaleString()
+                    : 'unlimited'}{' '}
+                  tokens used
+                </p>
+              </div>
+            </div>
+            <p className="text-[32px] leading-none font-semibold text-white">
+              {formatCents(estimatedCents)}
             </p>
           </div>
-          <div>
-            <p className="text-sm text-muted-foreground">Tokens used</p>
-            <p className="mt-1 text-2xl font-semibold">
-              {(myUsage?.usage.tokensUsed ?? 0).toLocaleString()}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Limit {(myUsage?.limits.tokenLimit ?? 0).toLocaleString()}
-            </p>
-          </div>
-          <div>
-            <p className="text-sm text-muted-foreground">Prompt / completion</p>
-            <p className="mt-1 text-2xl font-semibold">
-              {(myUsage?.usage.promptTokens ?? 0).toLocaleString()} /{' '}
-              {(myUsage?.usage.completionTokens ?? 0).toLocaleString()}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {isAdmin ? (
         <>
@@ -350,45 +371,18 @@ export function UsageClient({
             </p>
           ))}
 
-          <div className="grid gap-4 sm:grid-cols-3">
-            {[
-              {
-                label: 'Total estimated cost',
-                value: formatCents(usage?.totals.estimatedCostCents ?? 0),
-              },
-              {
-                label: 'Prompt tokens',
-                value: (usage?.totals.promptTokens ?? 0).toLocaleString(),
-              },
-              {
-                label: 'Completion tokens',
-                value: (usage?.totals.completionTokens ?? 0).toLocaleString(),
-              },
-            ].map((stat) => (
-              <Card key={stat.label} className="gap-2 py-5">
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">{stat.label}</p>
-                  <p className="mt-1 text-2xl font-semibold tracking-tight">
-                    {stat.value}
-                  </p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle>Plan</CardTitle>
-              <CardDescription>
-                Current plan: {overview?.planTier ?? 'FREE'} · up to{' '}
-                {overview?.maxMembers ?? 0} members
-                {billing?.subscriptionStatus
-                  ? ` · subscription ${billing.subscriptionStatus}`
-                  : ''}
-                .
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+          <section className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 sm:px-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-[18px] font-semibold text-white">Plan</h2>
+                <p className="mt-1 text-sm text-[#8b8b93]">
+                  Current plan: {overview?.planTier ?? 'FREE'} - up to{' '}
+                  {overview?.maxMembers ?? 0} members.
+                  {stripeEnabled
+                    ? ''
+                    : ' Plan changes apply immediately.'}
+                </p>
+              </div>
               {stripeEnabled ? (
                 <div className="flex flex-wrap items-center gap-3">
                   <Select
@@ -397,13 +391,13 @@ export function UsageClient({
                       setUpgradePlan(value as (typeof PAID_PLANS)[number])
                     }
                   >
-                    <SelectTrigger className="w-40">
+                    <SelectTrigger className="h-9 w-[140px] border-white/10 bg-[#2a2a2a]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       {PAID_PLANS.map((p) => (
                         <SelectItem key={p} value={p}>
-                          {p}
+                          {PLAN_LABEL[p]}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -411,6 +405,7 @@ export function UsageClient({
                   <Button
                     onClick={handleCheckout}
                     disabled={pending === 'checkout'}
+                    className="h-9 rounded-lg bg-[#2a2a2a] px-4 text-white hover:bg-[#333333]"
                   >
                     {pending === 'checkout'
                       ? 'Redirecting…'
@@ -428,22 +423,18 @@ export function UsageClient({
                 </div>
               ) : (
                 <>
-                  <p className="mb-4 text-xs text-muted-foreground">
-                    Stripe is not configured — plan changes apply immediately
-                    without payment (dev mode).
-                  </p>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     <Select
                       value={plan}
                       onValueChange={(value) => setPlan(value as typeof plan)}
                     >
-                      <SelectTrigger className="w-40">
+                      <SelectTrigger className="h-9 w-[140px] border-white/10 bg-[#2a2a2a]">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         {PLANS.map((p) => (
                           <SelectItem key={p} value={p}>
-                            {p}
+                            {PLAN_LABEL[p]}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -451,100 +442,102 @@ export function UsageClient({
                     <Button
                       onClick={handlePlanChange}
                       disabled={pending === 'plan'}
+                      className="h-9 rounded-lg bg-[#2a2a2a] px-4 text-white hover:bg-[#333333]"
                     >
-                      {pending === 'plan' ? 'Updating…' : 'Update plan'}
+                      {pending === 'plan' ? 'Updating…' : 'Update Plan'}
                     </Button>
                   </div>
                 </>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle>Organization monthly limits</CardTitle>
-              <CardDescription>
-                Set either value to 0 for unlimited. Current usage:{' '}
-                {formatCents(
-                  usage?.organizationLimits?.monthlySpendUsedCents ?? 0,
-                )}{' '}
-                and{' '}
-                {(
-                  usage?.organizationLimits?.monthlyTokensUsed ?? 0
-                ).toLocaleString()}{' '}
-                tokens.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="org-budget">Budget ($)</Label>
-                  <Input
-                    id="org-budget"
-                    value={organizationSpendLimit}
-                    onChange={(event) =>
-                      setOrganizationSpendLimit(event.target.value)
-                    }
-                    inputMode="decimal"
-                    className="w-32"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="org-tokens">Token cap</Label>
-                  <Input
-                    id="org-tokens"
-                    value={organizationTokenLimit}
-                    onChange={(event) =>
-                      setOrganizationTokenLimit(event.target.value)
-                    }
-                    inputMode="numeric"
-                    className="w-40"
-                  />
-                </div>
+          <section className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 sm:px-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="text-[18px] font-semibold text-white">
+                  Organization monthly limits
+                </h2>
+                <p className="mt-1 text-sm text-[#8b8b93]">
+                  Set either value to 0 for unlimited. Current usage:{' '}
+                  {formatCents(
+                    usage?.organizationLimits?.monthlySpendUsedCents ?? 0,
+                  )}{' '}
+                  and{' '}
+                  {(
+                    usage?.organizationLimits?.monthlyTokensUsed ?? 0
+                  ).toLocaleString()}{' '}
+                  tokens.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  id="org-budget"
+                  aria-label="Budget ($)"
+                  value={organizationSpendLimit}
+                  onChange={(event) =>
+                    setOrganizationSpendLimit(event.target.value)
+                  }
+                  inputMode="decimal"
+                  placeholder="Budget"
+                  className="h-9 w-28 border-white/10 bg-transparent"
+                />
+                <Input
+                  id="org-tokens"
+                  aria-label="Token cap"
+                  value={organizationTokenLimit}
+                  onChange={(event) =>
+                    setOrganizationTokenLimit(event.target.value)
+                  }
+                  inputMode="numeric"
+                  placeholder="Token Cap"
+                  className="h-9 w-32 border-white/10 bg-transparent"
+                />
                 <Button
                   onClick={saveOrganizationLimits}
                   disabled={pending === 'organization-limits'}
+                  className="h-9 rounded-lg bg-[#2a2a2a] px-4 text-white hover:bg-[#333333]"
                 >
-                  Save limits
+                  Save Limits
                 </Button>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle>Per-member usage</CardTitle>
-            </CardHeader>
-            <CardContent>
+          <section className="mt-8">
+            <h2 className="mb-3 text-[18px] font-semibold text-white">
+              Members
+            </h2>
+            <div className="overflow-x-auto rounded-xl bg-white/[0.04]">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Member</TableHead>
-                    <TableHead>Usage</TableHead>
-                    <TableHead>Spend cap ($)</TableHead>
-                    <TableHead>Token cap</TableHead>
-                    <TableHead>Status</TableHead>
+                  <TableRow className="border-white/10 hover:bg-transparent">
+                    <TableHead className="text-[#8b8b93]">Member</TableHead>
+                    <TableHead className="text-[#8b8b93]">Usage</TableHead>
+                    <TableHead className="text-[#8b8b93]">Spend cap ($)</TableHead>
+                    <TableHead className="text-[#8b8b93]">Token Cap</TableHead>
+                    <TableHead className="text-[#8b8b93]">Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {(usage?.members ?? []).map((member) => (
-                    <TableRow key={member.userId}>
+                    <TableRow key={member.userId} className="border-white/10">
                       <TableCell>
-                        <div className="font-medium">{member.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {member.email} · {member.role}
+                        <div className="font-medium text-white">{member.name}</div>
+                        <div className="text-xs text-[#8b8b93]">
+                          {member.email}
                         </div>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="text-white">
                         {formatCents(member.spendUsedCents)}
-                        <div className="text-xs text-muted-foreground">
+                        <div className="text-xs text-[#8b8b93]">
                           {member.tokensUsed.toLocaleString()} tokens
                         </div>
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Input
-                            className="w-24"
+                            className="h-8 w-20 border-white/10 bg-transparent"
                             inputMode="decimal"
                             placeholder={(
                               (member.spendLimitCents ?? 0) / 100
@@ -570,7 +563,7 @@ export function UsageClient({
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Input
-                            className="w-28"
+                            className="h-8 w-24 border-white/10 bg-transparent"
                             inputMode="numeric"
                             placeholder={String(member.tokenLimit ?? 0)}
                             value={tokenLimitDrafts[member.userId] ?? ''}
@@ -600,7 +593,12 @@ export function UsageClient({
                           </Badge>
                         ) : null}
                         {member.userId === currentUserId ? (
-                          <Badge variant="outline">You</Badge>
+                          <Badge
+                            variant="outline"
+                            className="border-white/10 bg-[#2c2c2c] text-white"
+                          >
+                            You
+                          </Badge>
                         ) : (
                           <Button
                             variant="ghost"
@@ -623,10 +621,42 @@ export function UsageClient({
                   ))}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         </>
       ) : null}
     </div>
+  );
+}
+
+function UsageRing({ percent }: { percent: number | null }) {
+  const radius = 26;
+  const circumference = 2 * Math.PI * radius;
+  const shown = percent === null ? 100 : Math.max(0, Math.min(100, percent));
+  const offset = circumference - (shown / 100) * circumference;
+
+  return (
+    <svg width="68" height="68" viewBox="0 0 68 68" aria-hidden="true">
+      <circle
+        cx="34"
+        cy="34"
+        r={radius}
+        fill="none"
+        stroke="rgba(255,255,255,0.12)"
+        strokeWidth="5"
+      />
+      <circle
+        cx="34"
+        cy="34"
+        r={radius}
+        fill="none"
+        stroke="#fff"
+        strokeWidth="5"
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        transform="rotate(-90 34 34)"
+      />
+    </svg>
   );
 }

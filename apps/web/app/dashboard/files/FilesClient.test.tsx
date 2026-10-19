@@ -26,6 +26,19 @@ function file(
 }
 
 describe('FilesClient lifecycle permissions', () => {
+  it('shows an empty library without sample files', () => {
+    render(
+      <FilesClient currentUserId="user-1" isAdmin={false} initialFiles={[]} />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Files' })).toBeInTheDocument();
+    expect(screen.getByText('No files yet')).toBeInTheDocument();
+    expect(
+      screen.getByText('Upload text, PDF, and DOCX files to use in chats.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('row')).not.toBeInTheDocument();
+  });
+
   it('exposes downloads only when ready and deletes only owned files', () => {
     render(
       <FilesClient

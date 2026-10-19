@@ -11,8 +11,11 @@ import {
   Query,
   Req,
   Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request, Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -32,6 +35,7 @@ import {
   RunSandboxDto,
 } from './dto/chat.dto';
 import { CodeSandboxService } from './code-sandbox.service';
+import { SpeechService, type SpeechAudioFile } from './speech.service';
 
 @Controller('chat')
 @UseGuards(JwtAuthGuard)
@@ -39,6 +43,7 @@ export class ChatController {
   constructor(
     private readonly chatService: ChatService,
     private readonly sandbox: CodeSandboxService,
+    private readonly speech: SpeechService,
   ) {}
 
   @Get('conversations')
@@ -419,6 +424,34 @@ export class ChatController {
   @HttpCode(200)
   runSandbox(@Body() dto: RunSandboxDto) {
     return this.sandbox.run(dto.language, dto.code);
+  }
+
+  @Post('speech/transcribe')
+  @HttpCode(200)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 8_000_000 } }),
+  )
+  transcribe(
+    @ActiveOrg() organizationId: string,
+    @UploadedFile() file?: SpeechAudioFile,
+  ) {
+    return this.speech.transcribe(
+      organizationId,
+      file ?? { buffer: Buffer.alloc(0), mimetype: '', size: 0 },
+    );
+  }
+
+  @Post('speech/synthesize')
+  @HttpCode(200)
+  async synthesize(
+    @ActiveOrg() organizationId: string,
+    @Body() body: { text?: string },
+    @Res() res: Response,
+  ) {
+    const audio = await this.speech.synthesize(organizationId, body.text ?? '');
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(audio);
   }
 
   @Delete('conversations/:id')

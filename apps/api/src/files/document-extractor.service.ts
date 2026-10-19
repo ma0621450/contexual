@@ -38,6 +38,9 @@ export class DocumentExtractorService {
   ): Promise<string> {
     let text: string;
     try {
+      if (mimeType.startsWith('image/')) {
+        return '';
+      }
       if (mimeType === 'application/pdf') {
         text = await this.extractPdf(buffer);
       } else if (

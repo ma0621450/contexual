@@ -2,6 +2,7 @@
 
 import {
   Children,
+  cloneElement,
   createContext,
   isValidElement,
   memo,
@@ -18,9 +19,14 @@ import remarkMath from 'remark-math';
 import remarkBreaks from 'remark-breaks';
 import rehypeKatex from 'rehype-katex';
 import rehypeHighlight from 'rehype-highlight';
-import { CheckIcon, CopyIcon, EyeIcon } from 'lucide-react';
+import { CheckIcon, ChevronRightIcon, CopyIcon, DownloadIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { isPreviewableLanguage } from './parseMessageContent';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { DiffBlock, MermaidBlock, DownloadBlock, CitationChip } from './RichBlocks';
 import { CodeSandbox } from './CodeSandbox';
 import { splitDownloadLinks } from './download-utils';
@@ -30,6 +36,27 @@ const InsideCodeBlock = createContext(false);
 const CanvasActionContext = createContext<
   ((language: string, code: string) => void) | undefined
 >(undefined);
+
+function trimTrailingNewline(node: ReactNode): ReactNode {
+  if (typeof node === 'string' || typeof node === 'number') {
+    return String(node).replace(/\n$/, '');
+  }
+  if (Array.isArray(node)) {
+    if (node.length === 0) return node;
+    const next = node.slice();
+    next[next.length - 1] = trimTrailingNewline(next[next.length - 1]);
+    return next;
+  }
+  if (isValidElement(node)) {
+    const props = node.props as { children?: ReactNode };
+    return cloneElement(
+      node,
+      props,
+      trimTrailingNewline(props.children),
+    );
+  }
+  return node;
+}
 
 function toPlainText(node: ReactNode): string {
   if (node === null || node === undefined || typeof node === 'boolean') {
@@ -57,7 +84,61 @@ function readLanguage(node: ReactNode): string {
   return '';
 }
 
-function CopyButton({ value, label }: { value: string; label: string }) {
+const LANGUAGE_LABELS: Record<string, string> = {
+  js: 'Javascript',
+  javascript: 'Javascript',
+  jsx: 'Javascript',
+  ts: 'Typescript',
+  typescript: 'Typescript',
+  tsx: 'Typescript',
+  py: 'Python',
+  python: 'Python',
+  css: 'CSS',
+  html: 'HTML',
+  json: 'JSON',
+  md: 'Markdown',
+  markdown: 'Markdown',
+  sh: 'Shell',
+  bash: 'Shell',
+  shell: 'Shell',
+  sql: 'SQL',
+  yml: 'YAML',
+  yaml: 'YAML',
+};
+
+const FILE_EXTENSIONS: Record<string, string> = {
+  javascript: 'js',
+  js: 'js',
+  jsx: 'jsx',
+  typescript: 'ts',
+  ts: 'ts',
+  tsx: 'tsx',
+  python: 'py',
+  py: 'py',
+  markdown: 'md',
+  md: 'md',
+  shell: 'sh',
+  bash: 'sh',
+  sh: 'sh',
+  yaml: 'yml',
+  yml: 'yml',
+};
+
+function languageLabel(language: string) {
+  const key = language.toLowerCase();
+  if (!key) return 'Text';
+  return (
+    LANGUAGE_LABELS[key] ??
+    key.charAt(0).toUpperCase() + key.slice(1)
+  );
+}
+
+function fileExtension(language: string) {
+  const key = language.toLowerCase();
+  return FILE_EXTENSIONS[key] ?? (key || 'txt');
+}
+
+function CopyButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -74,16 +155,97 @@ function CopyButton({ value, label }: { value: string; label: string }) {
     <button
       type="button"
       onClick={() => void copy()}
-      aria-label={copied ? 'Copied' : label}
-      className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      aria-label={copied ? 'Copied' : 'Copy code'}
+      className="inline-flex size-7 items-center justify-center rounded-md text-[#a1a1aa] transition-colors hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none"
     >
       {copied ? (
-        <CheckIcon className="size-3.5 text-success" />
+        <CheckIcon className="size-3.5 text-white" />
       ) : (
         <CopyIcon className="size-3.5" />
       )}
-      {copied ? 'Copied' : 'Copy'}
     </button>
+  );
+}
+
+function downloadCode(language: string, code: string) {
+  const blob = new Blob([code], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `snippet.${fileExtension(language)}`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function CodeSurface({
+  language,
+  code,
+  children,
+  tall = false,
+  onExpand,
+}: {
+  language: string;
+  code: string;
+  children: ReactNode;
+  tall?: boolean;
+  onExpand?: () => void;
+}) {
+  const label = languageLabel(language);
+  const source = code.replace(/\n$/, '');
+  const lines = source.length === 0 ? [''] : source.split('\n');
+
+  return (
+    <div className="overflow-hidden rounded-[14px] bg-[#2a2a2a] p-1.5">
+      <div className="flex items-center justify-between gap-3 px-2 py-1.5">
+        <div className="flex min-w-0 items-center gap-1">
+          <span className="rounded-md bg-[#141414] px-2.5 py-1 text-xs font-medium text-white">
+            {label}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1 text-[#a1a1aa]">
+          <CopyButton value={code} />
+          <button
+            type="button"
+            onClick={() => downloadCode(language, code)}
+            aria-label="Download code"
+            className="inline-flex size-7 items-center justify-center rounded-md transition-colors hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none"
+          >
+            <DownloadIcon className="size-3.5" />
+          </button>
+          {onExpand ? (
+            <button
+              type="button"
+              onClick={onExpand}
+              className="inline-flex items-center gap-0.5 rounded-md px-1.5 py-1 text-xs transition-colors hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none"
+            >
+              Expand
+              <ChevronRightIcon className="size-3.5" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <div
+        className={cn(
+          'chat-code overflow-auto rounded-[10px] bg-[#0c0c0c]',
+          tall ? 'max-h-[70vh]' : 'max-h-[min(70vh,40rem)]',
+        )}
+      >
+        <div className="flex min-w-full px-4 py-3 font-mono text-[13px] leading-5.5">
+          <ol className="sticky left-0 m-0 shrink-0 list-none bg-[#0c0c0c] pr-4 text-right text-shell-muted select-none">
+            {lines.map((_, index) => (
+              <li key={index} className="h-5.5">
+                {index + 1}.
+              </li>
+            ))}
+          </ol>
+          <InsideCodeBlock.Provider value={true}>
+            <pre className="m-0 min-w-0 flex-1 overflow-visible bg-transparent p-0 text-[13px] leading-5.5 text-[#ececec]">
+              {children}
+            </pre>
+          </InsideCodeBlock.Provider>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -91,8 +253,8 @@ function CodeBlock({ children }: { children: ReactNode }) {
   const language = readLanguage(children);
   const code = toPlainText(children);
   const onOpenCanvas = useContext(CanvasActionContext);
-  const canPreview = Boolean(onOpenCanvas && isPreviewableLanguage(language));
   const normalized = language.toLowerCase();
+  const [expanded, setExpanded] = useState(false);
 
   if (normalized === 'diff') {
     return <DiffBlock content={code} />;
@@ -111,32 +273,32 @@ function CodeBlock({ children }: { children: ReactNode }) {
     );
   }
 
+  const label = languageLabel(language);
+
   return (
-    <div className="not-prose my-4 block w-full overflow-hidden rounded-xl border border-border bg-muted/40">
-      <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/60 px-3 py-1.5">
-        <span className="font-mono text-[11px] tracking-wide text-muted-foreground uppercase">
-          {language || 'text'}
-        </span>
-        <div className="flex items-center gap-1">
-          {canPreview ? (
-            <button
-              type="button"
-              onClick={() => onOpenCanvas?.(language, code)}
-              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-            >
-              <EyeIcon className="size-3.5" />
-              Canvas
-            </button>
-          ) : null}
-          <CopyButton value={code} label="Copy code" />
-        </div>
-      </div>
-      <InsideCodeBlock.Provider value={true}>
-        <pre className="overflow-x-auto p-4 text-[13px] leading-relaxed">
-          {children}
-        </pre>
-      </InsideCodeBlock.Provider>
+    <div className="not-prose my-4 block w-full">
+      <p className="mb-2 text-sm font-semibold text-white">{label} code</p>
+      <CodeSurface
+        language={language}
+        code={code}
+        onExpand={() => setExpanded(true)}
+      >
+        {children}
+      </CodeSurface>
       <CodeSandbox language={language} code={code} />
+      <Dialog open={expanded} onOpenChange={setExpanded}>
+        <DialogContent className="max-h-[90vh] max-w-4xl overflow-hidden border-white/10 bg-[#161616] p-4 sm:p-5">
+          <DialogTitle className="pr-8 text-sm font-semibold text-white">
+            {label} code
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Expanded {label} code block
+          </DialogDescription>
+          <CodeSurface language={language} code={code} tall>
+            {children}
+          </CodeSurface>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -150,8 +312,14 @@ function Code({
 
   if (insideCodeBlock) {
     return (
-      <code className={cn('font-mono', className)} {...props}>
-        {children}
+      <code
+        className={cn(
+          'block font-mono text-[13px] leading-5.5 whitespace-pre text-[#ececec]',
+          className,
+        )}
+        {...props}
+      >
+        {trimTrailingNewline(children)}
       </code>
     );
   }

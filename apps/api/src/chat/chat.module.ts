@@ -11,6 +11,7 @@ import { ChatAgentService } from './chat-agent.service';
 import { UsageReservationService } from './usage-reservation.service';
 import { WebSearchService } from './web-search.service';
 import { CodeSandboxService } from './code-sandbox.service';
+import { SpeechService } from './speech.service';
 
 @Module({
   imports: [ProvidersModule, MemoriesModule, FilesModule],
@@ -23,6 +24,7 @@ import { CodeSandboxService } from './code-sandbox.service';
     WebSearchService,
     ChatAgentService,
     CodeSandboxService,
+    SpeechService,
   ],
 })
 export class ChatModule {}

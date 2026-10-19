@@ -1,8 +1,10 @@
 'use client';
 
+/* eslint-disable @next/next/no-img-element */
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2Icon, PlugIcon } from 'lucide-react';
+import { CheckIcon, KeyboardIcon, PlugIcon } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api/client';
 import type {
   AiProviderId,
@@ -17,8 +19,12 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -30,32 +36,41 @@ import {
 const PROVIDER_OPTIONS: {
   id: AiProviderId;
   label: string;
+  badge: string;
   description: string;
-  placeholder: string;
+  logo: string;
 }[] = [
   {
     id: 'OPENAI',
     label: 'OpenAI',
-    description: 'GPT models for general chat and reasoning.',
-    placeholder: 'sk-…',
+    badge: 'GPT',
+    description:
+      'Connect a key, then choose which GPT models your organization can use in chat.',
+    logo: '/brand/providers/openai.svg',
   },
   {
     id: 'ANTHROPIC',
     label: 'Anthropic',
-    description: 'Claude models for careful analysis and writing.',
-    placeholder: 'sk-ant-…',
+    badge: 'Claude',
+    description:
+      'Claude models for careful writing, review, and longer pieces of work.',
+    logo: '/brand/providers/anthropic.svg',
   },
   {
     id: 'GOOGLE',
-    label: 'Google Gemini',
-    description: 'Gemini models for fast multimodal-ready chat.',
-    placeholder: 'AIza…',
+    label: 'Google',
+    badge: 'Gemini',
+    description:
+      'Gemini models for fast replies when the organization uses a Google key.',
+    logo: '/brand/providers/google.svg',
   },
   {
     id: 'XAI',
     label: 'xAI',
-    description: 'Grok models for fast, up-to-date responses.',
-    placeholder: 'xai-…',
+    badge: 'Grok',
+    description:
+      'Grok models for direct, quick chat once an xAI key is connected.',
+    logo: '/brand/providers/xai.svg',
   },
 ];
 
@@ -273,234 +288,231 @@ export function ProvidersClient({
     }
   }
 
+  const activeOption = PROVIDER_OPTIONS.find((item) => item.id === activeProvider);
+  const activeConnected = activeProvider
+    ? connectedByProvider.get(activeProvider)
+    : undefined;
+
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
-      <div className="mb-6">
-        <h2 className="text-xl font-semibold tracking-tight">AI providers</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+    <div className="mx-auto w-full max-w-[1070px] px-4 pt-8 pb-10 sm:px-6">
+      <div>
+        <h1 className="text-[30px] leading-9 font-semibold tracking-[-0.6px] text-white">
+          AI providers
+        </h1>
+        <p className="mt-1 max-w-xl text-sm text-[#a1a1aa]">
           Connect providers with your API keys, then choose which models your
           organization can use in chat.
         </p>
       </div>
 
       {formError ? (
-        <p className="mb-4 rounded-lg border border-destructive/25 bg-destructive/8 px-3 py-2 text-sm text-destructive">
+        <p role="alert" className="mt-6 text-sm text-destructive">
           {formError}
         </p>
       ) : null}
-
       {notice ? (
-        <p className="mb-4 rounded-lg border border-border bg-accent px-3 py-2 text-sm text-accent-foreground">
+        <p role="status" className="mt-6 text-sm text-[#d4d4d8]">
           {notice}
         </p>
       ) : null}
-
       {!isAdmin ? (
-        <p className="mb-4 text-sm text-muted-foreground">
+        <p className="mt-6 text-sm text-[#a1a1aa]">
           Only organization admins can manage AI providers and model access.
         </p>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="mt-8 grid gap-4 sm:grid-cols-2">
         {PROVIDER_OPTIONS.map((option) => {
           const connected = connectedByProvider.get(option.id);
-          const providerModels = modelsFor(option.id);
-          const isEditing =
-            activeProvider === option.id && editorMode !== null;
-          const editingModels = isEditing && editorMode === 'models';
-          const editingConnect = isEditing && editorMode === 'connect';
-
           return (
-            <Card key={option.id}>
-              <CardContent className="space-y-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold">{option.label}</h3>
-                      <Badge variant={connected ? 'success' : 'secondary'}>
-                        {connected ? 'Connected' : 'Not connected'}
-                      </Badge>
-                    </div>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {option.description}
-                    </p>
-                    {connected ? (
-                      <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                        <p>
-                          Default model:{' '}
-                          <span className="text-foreground">
-                            {providerModels.find(
-                              (model) => model.id === connected.defaultModel,
-                            )?.label ?? connected.defaultModel}
-                          </span>
-                        </p>
-                        <p>
-                          Enabled:{' '}
-                          <span className="text-foreground">
-                            {connected.enabledModels.length} model
-                            {connected.enabledModels.length === 1 ? '' : 's'}
-                          </span>
-                          {connected.connectedByName
-                            ? ` · Added by ${connected.connectedByName}`
-                            : ''}
-                        </p>
-                      </div>
-                    ) : null}
-                  </div>
+            <article
+              key={option.id}
+              className="flex min-h-[220px] flex-col rounded-2xl border border-white/10 bg-[#161616] p-5"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <span className="flex size-10 items-center justify-center rounded-full border border-white/10 bg-black/30">
+                  <img
+                    src={option.logo}
+                    alt=""
+                    width={22}
+                    height={22}
+                    className="size-[22px]"
+                  />
+                </span>
+                <span className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-[#d4d4d8]">
+                  {connected ? 'Connected' : option.badge}
+                </span>
+              </div>
+              <h2 className="mt-4 text-[18px] font-semibold text-white">
+                {option.label}
+              </h2>
+              <p className="mt-2 flex-1 text-sm leading-5 text-[#a1a1aa]">
+                {option.description}
+              </p>
+              {connected ? (
+                <p className="mt-2 text-xs text-[#8b8b93]">
+                  {connected.enabledModels.length} model
+                  {connected.enabledModels.length === 1 ? '' : 's'} enabled
+                </p>
+              ) : null}
+              {isAdmin ? (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    onClick={() =>
+                      connected
+                        ? startEditModels(option.id)
+                        : startConnect(option.id)
+                    }
+                    disabled={Boolean(pending)}
+                    className="h-9 rounded-lg bg-[#2a2a2a] px-3 text-sm text-white hover:bg-[#333333]"
+                  >
+                    <PlugIcon />
+                    {connected ? 'Manage' : 'Connect'}
+                  </Button>
                   {connected ? (
-                    <CheckCircle2Icon className="size-5 shrink-0 text-success" />
-                  ) : (
-                    <PlugIcon className="size-5 shrink-0 text-muted-foreground" />
-                  )}
-                </div>
-
-                {!isAdmin ? null : connected && !isEditing ? (
-                  <div className="flex flex-wrap gap-2">
                     <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => startEditModels(option.id)}
-                    >
-                      Manage models
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
+                      type="button"
+                      variant="ghost"
                       onClick={() => startConnect(option.id)}
+                      className="h-9 text-[#a1a1aa] hover:bg-white/5 hover:text-white"
                     >
                       Update key
                     </Button>
+                  ) : null}
+                  {connected ? (
                     <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-destructive"
-                      onClick={() => handleDisconnect(option.id)}
+                      type="button"
+                      variant="ghost"
+                      onClick={() => void handleDisconnect(option.id)}
                       disabled={pending === `disconnect:${option.id}`}
+                      className="h-9 text-destructive hover:bg-destructive/10 hover:text-destructive"
                     >
                       {pending === `disconnect:${option.id}`
                         ? 'Disconnecting…'
                         : 'Disconnect'}
                     </Button>
-                  </div>
-                ) : null}
-
-                {!isAdmin ? null : !connected && !isEditing ? (
-                  <Button
-                    size="sm"
-                    onClick={() => startConnect(option.id)}
-                    disabled={Boolean(pending)}
-                  >
-                    Connect {option.label}
-                  </Button>
-                ) : null}
-
-                {isAdmin && editingConnect ? (
-                  <form onSubmit={handleConnect} className="space-y-3">
-                    <div className="space-y-1.5">
-                      <Label htmlFor={`apiKey-${option.id}`}>API key</Label>
-                      <Input
-                        id={`apiKey-${option.id}`}
-                        type="password"
-                        autoComplete="off"
-                        value={apiKey}
-                        onChange={(event) => {
-                          setApiKey(event.target.value);
-                          setFieldError('');
-                        }}
-                        placeholder={option.placeholder}
-                        aria-invalid={fieldError ? true : undefined}
-                        disabled={pending === `connect:${option.id}`}
-                      />
-                    </div>
-
-                    <ModelAccessFields
-                      providerId={option.id}
-                      providerModels={providerModels}
-                      enabledModels={enabledModels}
-                      defaultModel={defaultModel}
-                      disabled={pending === `connect:${option.id}`}
-                      onToggle={toggleModel}
-                      onDefaultChange={setDefaultModel}
-                    />
-
-                    {fieldError ? (
-                      <p className="text-sm text-destructive">{fieldError}</p>
-                    ) : null}
-
-                    <div className="flex gap-2">
-                      <Button
-                        type="submit"
-                        size="sm"
-                        disabled={
-                          pending === `connect:${option.id}` ||
-                          enabledModels.length === 0
-                        }
-                      >
-                        {pending === `connect:${option.id}`
-                          ? 'Validating…'
-                          : connected
-                            ? 'Save connection'
-                            : `Connect ${option.label}`}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={closeEditor}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      We validate the key, store it encrypted, and only expose
-                      the models you enable to your team.
-                    </p>
-                  </form>
-                ) : null}
-
-                {isAdmin && editingModels ? (
-                  <form onSubmit={handleSaveModels} className="space-y-3">
-                    <ModelAccessFields
-                      providerId={option.id}
-                      providerModels={providerModels}
-                      enabledModels={enabledModels}
-                      defaultModel={defaultModel}
-                      disabled={pending === `models:${option.id}`}
-                      onToggle={toggleModel}
-                      onDefaultChange={setDefaultModel}
-                    />
-                    {fieldError ? (
-                      <p className="text-sm text-destructive">{fieldError}</p>
-                    ) : null}
-                    <div className="flex gap-2">
-                      <Button
-                        type="submit"
-                        size="sm"
-                        disabled={
-                          pending === `models:${option.id}` ||
-                          enabledModels.length === 0
-                        }
-                      >
-                        {pending === `models:${option.id}`
-                          ? 'Saving…'
-                          : 'Save model access'}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={closeEditor}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </form>
-                ) : null}
-              </CardContent>
-            </Card>
+                  ) : null}
+                </div>
+              ) : null}
+            </article>
           );
         })}
       </div>
+
+      <Dialog
+        open={activeOption !== undefined && editorMode !== null}
+        onOpenChange={(open) => {
+          if (!open && !pending) closeEditor();
+        }}
+      >
+        <DialogContent
+          className="gap-5 rounded-2xl border-white/10 bg-[#161616] p-6 text-white shadow-2xl sm:max-w-[440px]"
+          style={{ backgroundColor: '#161616' }}
+        >
+          {activeOption && activeProvider ? (
+            <>
+              <DialogHeader className="pr-8">
+                <div className="flex items-center gap-3">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-black/40">
+                    <img
+                      src={activeOption.logo}
+                      alt=""
+                      width={18}
+                      height={18}
+                      className="size-[18px]"
+                    />
+                  </span>
+                  <DialogTitle className="text-[22px] font-semibold tracking-[-0.4px] text-white">
+                    {activeOption.label}
+                  </DialogTitle>
+                </div>
+              </DialogHeader>
+              <p className="-mt-2 text-sm leading-6 text-[#a1a1aa]">
+                {activeOption.description}
+              </p>
+              {editorMode === 'connect' ? (
+                <form onSubmit={handleConnect} className="mt-2 space-y-4">
+                  <div className="relative">
+                    <KeyboardIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[#8b8b93]" />
+                    <Input
+                      type="password"
+                      autoComplete="off"
+                      value={apiKey}
+                      onChange={(event) => {
+                        setApiKey(event.target.value);
+                        setFieldError('');
+                      }}
+                      placeholder="Please enter API key"
+                      aria-label="API key"
+                      aria-invalid={fieldError ? true : undefined}
+                      disabled={pending === `connect:${activeProvider}`}
+                      className="h-10 border-white/10 bg-transparent pl-10"
+                    />
+                  </div>
+                  {fieldError ? (
+                    <p role="alert" className="text-sm text-destructive">
+                      {fieldError}
+                    </p>
+                  ) : null}
+                  <div className="flex justify-end">
+                    <Button
+                      type="submit"
+                      disabled={
+                        pending === `connect:${activeProvider}` ||
+                        enabledModels.length === 0
+                      }
+                      className="h-9 rounded-lg bg-[#2a2a2a] px-4 text-white hover:bg-[#333333]"
+                    >
+                      <PlugIcon />
+                      {pending === `connect:${activeProvider}`
+                        ? 'Validating…'
+                        : activeConnected
+                          ? 'Save'
+                          : 'Connect'}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-[#8b8b93]">
+                    The key is validated and stored encrypted. Every model for
+                    this provider is enabled until you manage the list.
+                  </p>
+                </form>
+              ) : (
+                <form onSubmit={handleSaveModels} className="space-y-5">
+                  <ModelAccessFields
+                    providerId={activeProvider}
+                    providerModels={modelsFor(activeProvider)}
+                    enabledModels={enabledModels}
+                    defaultModel={defaultModel}
+                    disabled={pending === `models:${activeProvider}`}
+                    onToggle={toggleModel}
+                    onDefaultChange={setDefaultModel}
+                  />
+                  {fieldError ? (
+                    <p role="alert" className="text-sm text-destructive">
+                      {fieldError}
+                    </p>
+                  ) : null}
+                  <div className="flex justify-end border-t border-white/10 pt-4">
+                    <Button
+                      type="submit"
+                      disabled={
+                        pending === `models:${activeProvider}` ||
+                        enabledModels.length === 0
+                      }
+                      className="h-9 rounded-lg bg-white px-4 text-sm font-medium text-[#111111] hover:bg-white/90"
+                    >
+                      {pending === `models:${activeProvider}`
+                        ? 'Saving…'
+                        : 'Save model access'}
+                    </Button>
+                  </div>
+                </form>
+              )}
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -529,28 +541,56 @@ function ModelAccessFields({
   return (
     <>
       <div className="space-y-2">
-        <Label>Enabled models</Label>
-        <div className="space-y-2 rounded-lg border border-border p-3">
+        <div className="flex items-baseline justify-between gap-3">
+          <Label className="text-[13px] font-medium text-white">
+            Enabled models
+          </Label>
+          <span className="text-xs text-[#8b8b93]">
+            {enabledModels.length} of {providerModels.length}
+          </span>
+        </div>
+        <div className="flex flex-col gap-1.5 rounded-xl border border-white/10 bg-black/25 p-1.5">
           {providerModels.map((model) => {
             const checked = enabledModels.includes(model.id);
             return (
               <label
                 key={model.id}
-                className="flex cursor-pointer items-start gap-2 text-sm"
+                className={cn(
+                  'flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2.5 transition-colors',
+                  checked ? 'bg-white/[0.05]' : 'hover:bg-white/[0.03]',
+                  disabled && 'cursor-not-allowed opacity-60',
+                )}
               >
                 <input
                   type="checkbox"
-                  className="mt-0.5"
+                  className="sr-only"
                   checked={checked}
                   disabled={disabled}
                   onChange={() => onToggle(model.id)}
                 />
-                <span className="min-w-0">
-                  <span className="font-medium">
-                    {model.label}
-                    {model.isDefault ? ' ★' : ''}
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-colors',
+                    checked
+                      ? 'border-white bg-white text-[#111111]'
+                      : 'border-white/25 bg-transparent',
+                  )}
+                >
+                  {checked ? <CheckIcon className="size-3" strokeWidth={3} /> : null}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="truncate text-sm font-medium text-white">
+                      {model.label}
+                    </span>
+                    {model.isDefault ? (
+                      <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium tracking-wide text-[#d4d4d8] uppercase">
+                        Recommended
+                      </span>
+                    ) : null}
                   </span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                  <span className="mt-0.5 block truncate text-xs text-[#8b8b93]">
                     {model.id}
                   </span>
                 </span>
@@ -560,21 +600,29 @@ function ModelAccessFields({
         </div>
       </div>
 
-      <div className="space-y-1.5">
-        <Label htmlFor={`defaultModel-${providerId}`}>Default model</Label>
+      <div className="space-y-2">
+        <Label
+          htmlFor={`defaultModel-${providerId}`}
+          className="text-[13px] font-medium text-white"
+        >
+          Default model
+        </Label>
         <Select
           value={defaultModel || undefined}
           onValueChange={onDefaultChange}
           disabled={disabled || enabledOptions.length === 0}
         >
-          <SelectTrigger id={`defaultModel-${providerId}`}>
+          <SelectTrigger
+            id={`defaultModel-${providerId}`}
+            className="h-10 rounded-lg border-white/10 bg-black/25"
+          >
             <SelectValue placeholder="Choose a default model" />
           </SelectTrigger>
           <SelectContent>
             {enabledOptions.map((model) => (
               <SelectItem key={model.id} value={model.id}>
                 {model.label}
-                {model.isDefault ? ' ★' : ''}
+                {model.isDefault ? ' · Recommended' : ''}
               </SelectItem>
             ))}
           </SelectContent>

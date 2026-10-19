@@ -7,6 +7,10 @@ export const SUPPORTED_MIME_TYPES = [
   'application/json',
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
 ] as const;
 
 export type SupportedMimeType = (typeof SUPPORTED_MIME_TYPES)[number];
@@ -20,6 +24,8 @@ const decoder = new TextDecoder('utf-8', { fatal: true });
 
 export function sniffFileContent(buffer: Buffer): SniffedFile | null {
   const sha256 = createHash('sha256').update(buffer).digest('hex');
+  const imageType = sniffImage(buffer);
+  if (imageType) return { mimeType: imageType, sha256 };
   const pdfHeader = buffer.subarray(0, Math.min(buffer.length, 1024));
   const pdfIndex = pdfHeader.indexOf(Buffer.from('%PDF-'));
   const pdfPrefix = pdfHeader.subarray(0, Math.max(0, pdfIndex));
@@ -93,4 +99,40 @@ export function sniffFileContent(buffer: Buffer): SniffedFile | null {
     return { mimeType: 'text/markdown', sha256 };
   }
   return { mimeType: 'text/plain', sha256 };
+}
+
+function sniffImage(buffer: Buffer): SupportedMimeType | null {
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return 'image/png';
+  }
+  if (
+    buffer.length >= 3 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff
+  ) {
+    return 'image/jpeg';
+  }
+  const gif = buffer.subarray(0, 6).toString('ascii');
+  if (buffer.length >= 6 && (gif === 'GIF87a' || gif === 'GIF89a')) {
+    return 'image/gif';
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    buffer.subarray(8, 12).toString('ascii') === 'WEBP'
+  ) {
+    return 'image/webp';
+  }
+  return null;
 }

@@ -168,6 +168,16 @@
   --color-soft: #a1a1a1;
   --color-danger-soft: #ff6467;
 
+  /* Dashboard shell (Figma: white glass on #111, main/500 labels). */
+  --color-shell-bg: #111111;
+  --color-shell-panel: rgb(255 255 255 / 0.02);
+  --color-shell-raised: rgb(255 255 255 / 0.03);
+  --color-shell-active: rgb(255 255 255 / 0.1);
+  --color-shell-hover: rgb(255 255 255 / 0.06);
+  --color-shell-muted: #737373;
+  --color-shell-text: #ffffff;
+  --color-shell-line: rgb(255 255 255 / 0.14);
+
   --shadow-card:
     0 1px 3px 0 rgb(15 23 42 / 0.04), 0 1px 2px -1px rgb(15 23 42 / 0.04);
   --shadow-elevated:
@@ -293,6 +303,58 @@
   font-weight: 600;
 }
 
+/* Chat code blocks follow the dark reference: gray comments, red keywords and strings. */
+.chat-code {
+  color: #ececec;
+}
+
+.chat-code .hljs-comment,
+.chat-code .hljs-quote {
+  color: #8b9098;
+  font-style: normal;
+}
+
+.chat-code .hljs-keyword,
+.chat-code .hljs-selector-tag,
+.chat-code .hljs-literal,
+.chat-code .hljs-doctag,
+.chat-code .hljs-formula {
+  color: #f07178;
+}
+
+.chat-code .hljs-string,
+.chat-code .hljs-regexp,
+.chat-code .hljs-addition,
+.chat-code .hljs-attribute,
+.chat-code .hljs-meta .hljs-string {
+  color: #e06c75;
+}
+
+.chat-code .hljs-number,
+.chat-code .hljs-symbol,
+.chat-code .hljs-bullet,
+.chat-code .hljs-link,
+.chat-code .hljs-meta,
+.chat-code .hljs-selector-id,
+.chat-code .hljs-template-variable {
+  color: #d19a66;
+}
+
+.chat-code .hljs-title,
+.chat-code .hljs-title.function_,
+.chat-code .hljs-section,
+.chat-code .hljs-name,
+.chat-code .hljs-variable,
+.chat-code .hljs-attr,
+.chat-code .hljs-property,
+.chat-code .hljs-built_in,
+.chat-code .hljs-class .hljs-title,
+.chat-code .hljs-title.class_,
+.chat-code .hljs-type,
+.chat-code .hljs-selector-class {
+  color: #ececec;
+}
+
 /* Rendered markdown answers */
 .markdown-body .katex-display {
   overflow-x: auto;
@@ -306,6 +368,92 @@
 
 .markdown-body > :last-child {
   margin-bottom: 0;
+}
+
+.thinking-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 168px;
+  border-radius: 999px;
+  padding: 11px 28px;
+  background: #070707;
+  color: #d4d4d8;
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  box-shadow:
+    0 0 0 1.5px rgba(255, 255, 255, 0.92),
+    0 0 16px rgba(255, 255, 255, 0.45),
+    0 0 36px rgba(255, 255, 255, 0.16);
+}
+
+.thinking-pill-spark {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow:
+    0 0 6px 2px #fff,
+    0 0 14px 4px rgba(255, 255, 255, 0.9);
+  offset-path: inset(0 round 999px);
+  offset-distance: 12%;
+  animation: thinking-orbit 2.8s linear infinite;
+  pointer-events: none;
+}
+
+.thinking-ellipsis::after {
+  content: '';
+  display: inline-block;
+  width: 2.4em;
+  text-align: left;
+  animation: thinking-dots 1.4s steps(5, end) infinite;
+}
+
+.thinking-process {
+  animation: thinking-reveal 280ms ease-out;
+}
+
+@keyframes thinking-orbit {
+  to {
+    offset-distance: 112%;
+  }
+}
+
+@keyframes thinking-dots {
+  0% { content: ''; }
+  20% { content: '.'; }
+  40% { content: '..'; }
+  60% { content: '...'; }
+  80% { content: '....'; }
+  100% { content: '.....'; }
+}
+
+@keyframes thinking-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-pill-spark,
+  .thinking-ellipsis::after,
+  .thinking-process {
+    animation: none;
+  }
+
+  .thinking-ellipsis::after {
+    content: '.....';
+  }
 }
 
 .markdown-body pre,

@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { MessageContent } from './MessageContent';
 import { Markdown } from './Markdown';
+import { ImageFan } from './ImageFan';
 import type { CanvasArtifact } from './parseMessageContent';
 
 type MessageUsage = {
@@ -65,11 +66,25 @@ export function MessageRow({
   const feedback = message.metadata?.feedback;
   const canMutate =
     !message.id.startsWith('temp-') && !streaming && !sending;
+  const imageAttachments = (message.attachments ?? []).filter((file) =>
+    file.previewUrl ||
+    file.mimeType.startsWith('image/') ||
+    /\.(png|jpe?g|gif|webp)$/i.test(file.filename),
+  );
+  const fileAttachments = (message.attachments ?? []).filter(
+    (file) => !imageAttachments.some((image) => image.id === file.id),
+  );
 
   if (isUser) {
     return (
       <div className="group/message flex justify-end">
-        <div className="max-w-[85%] min-w-0 space-y-2 sm:max-w-[75%]">
+        <div
+          className={
+            imageAttachments.length
+              ? 'flex w-full max-w-[520px] min-w-0 flex-col items-end gap-3'
+              : 'max-w-[85%] min-w-0 space-y-2 sm:max-w-[75%]'
+          }
+        >
           {editing ? (
             <div className="space-y-2 rounded-2xl border border-border bg-card p-3">
               <Textarea
@@ -105,14 +120,14 @@ export function MessageRow({
                 </Button>
               </div>
             </div>
-          ) : (
-            <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-primary-foreground">
-              <div className="text-[0.9375rem] leading-7 [&_.markdown-body]:text-primary-foreground [&_a]:text-primary-foreground">
+          ) : message.content ? (
+            <div className="w-fit max-w-[340px] rounded-2xl border border-white/10 bg-[#1c1c1c] px-4 py-3 text-[13px] leading-5 text-[#d4d4d8]">
+              <div className="[&_.markdown-body]:text-[13px] [&_.markdown-body]:leading-5 [&_.markdown-body]:text-[#d4d4d8] [&_.markdown-body_p]:my-0 [&_.markdown-body_p]:leading-5 [&_a]:text-[#d4d4d8]">
                 <Markdown content={message.content} />
               </div>
-              {message.attachments?.length ? (
-                <div className="space-y-1 border-t border-primary-foreground/25 pt-2">
-                  {message.attachments.map((file) => (
+              {fileAttachments.length ? (
+                <div className="mt-2 space-y-1 border-t border-white/15 pt-2">
+                  {fileAttachments.map((file) => (
                     <a
                       key={file.id}
                       href={`/api/files/${file.id}/download`}
@@ -125,7 +140,17 @@ export function MessageRow({
                 </div>
               ) : null}
             </div>
-          )}
+          ) : null}
+          {imageAttachments.length ? (
+            <ImageFan
+              align="end"
+              images={imageAttachments.map((file) => ({
+                key: file.id,
+                src: file.previewUrl ?? `/api/files/${file.id}/download`,
+                filename: file.filename,
+              }))}
+            />
+          ) : null}
           {!editing ? (
             <div className="flex justify-end gap-1 opacity-100 sm:opacity-0 sm:transition-opacity sm:focus-within:opacity-100 sm:group-hover/message:opacity-100">
               <MessageCopyButton content={message.content} />
@@ -158,10 +183,10 @@ export function MessageRow({
 
   return (
     <div className="group/message flex gap-3">
-      <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-card text-primary">
+      <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/80">
         <SparklesIcon className="size-4" />
       </span>
-      <div className="min-w-0 flex-1">
+      <div className="w-full min-w-0">
         <MessageContent
           content={message.content}
           streaming={streaming}
@@ -172,9 +197,21 @@ export function MessageRow({
           }
         />
 
-        {message.attachments?.length ? (
+        {imageAttachments.length ? (
+          <div className="mt-3">
+            <ImageFan
+              align="start"
+              images={imageAttachments.map((file) => ({
+                key: file.id,
+                src: file.previewUrl ?? `/api/files/${file.id}/download`,
+                filename: file.filename,
+              }))}
+            />
+          </div>
+        ) : null}
+        {fileAttachments.length ? (
           <div className="mt-3 space-y-1 border-t border-border pt-2">
-            {message.attachments.map((file) => (
+            {fileAttachments.map((file) => (
               <a
                 key={file.id}
                 href={`/api/files/${file.id}/download`}
@@ -281,7 +318,7 @@ function ActionButton({
       className={cn(
         'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
         active
-          ? 'bg-primary/10 text-primary'
+          ? 'bg-white/10 text-white'
           : danger
             ? 'text-muted-foreground hover:bg-destructive/10 hover:text-destructive'
             : 'text-muted-foreground hover:bg-muted hover:text-foreground',

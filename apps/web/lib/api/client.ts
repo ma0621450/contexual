@@ -106,6 +106,34 @@ export async function apiFetch<T>(
   return { ok: true, data };
 }
 
+export async function apiFetchBlob(
+  path: string,
+  options: RequestInit = {},
+): Promise<ApiResult<Blob>> {
+  let response: Response;
+  try {
+    response = await fetchWithRefresh(path, options);
+  } catch {
+    return {
+      ok: false,
+      error: 'Unable to reach the server. Check your connection and try again.',
+      networkError: true,
+    };
+  }
+
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    return {
+      ok: false,
+      error: getErrorMessage(data),
+      status: response.status,
+      code: typeof data.code === 'string' ? data.code : undefined,
+    };
+  }
+
+  return { ok: true, data: await response.blob() };
+}
+
 export type ChatStreamEvent =
   | { type: 'start'; conversationId: string; title: string }
   | { type: 'title'; conversationId: string; title: string }

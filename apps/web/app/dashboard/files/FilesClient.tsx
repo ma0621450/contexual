@@ -1,9 +1,10 @@
 'use client';
 
+/* eslint-disable @next/next/no-img-element */
 import { useEffect, useRef, useState } from 'react';
 import {
+  CopyIcon,
   DownloadIcon,
-  FileIcon,
   LoaderCircleIcon,
   Trash2Icon,
   UploadIcon,
@@ -13,7 +14,6 @@ import type { FileProcessingStatus, StoredFile } from '@/lib/api/server';
 import { isFileTerminal } from '@/lib/files';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import {
   Table,
   TableBody,
@@ -66,6 +66,7 @@ export function FilesClient({
   const [deleteTarget, setDeleteTarget] = useState<StoredFile | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const hasPending = files.some((file) => !isFileTerminal(file));
 
@@ -126,13 +127,27 @@ export function FilesClient({
     setDeleteTarget(null);
   }
 
+  async function copyFilename(file: StoredFile) {
+    try {
+      await navigator.clipboard.writeText(file.filename);
+      setCopiedId(file.id);
+    } catch {
+      setRowErrors((current) => ({
+        ...current,
+        [file.id]: 'Could not copy the file name.',
+      }));
+    }
+  }
+
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+    <div className="mx-auto w-full max-w-[1070px] px-4 pt-8 pb-10 sm:px-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">Files</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Upload secure context files and track scanning and processing.
+          <h1 className="text-[32px] leading-10 font-semibold tracking-[-1.2px] text-white sm:text-[48px] sm:leading-[56px] sm:tracking-[-1.92px]">
+            Files
+          </h1>
+          <p className="mt-0.5 max-w-md text-[16px] leading-7 text-[#a1a1aa]">
+            Upload text, PDF, and DOCX files to use in chats.
           </p>
         </div>
         <div>
@@ -153,13 +168,14 @@ export function FilesClient({
             onClick={() => inputRef.current?.click()}
             disabled={uploading}
             aria-busy={uploading}
+            className="h-[37px] rounded-[10px] bg-white px-4 text-[#111111] hover:bg-white/90 focus-visible:ring-white/50"
           >
             {uploading ? (
               <LoaderCircleIcon className="animate-spin" />
             ) : (
               <UploadIcon />
             )}
-            {uploading ? 'Uploading…' : 'Upload file'}
+            {uploading ? 'Uploading…' : 'Upload'}
           </Button>
         </div>
       </div>
@@ -179,27 +195,39 @@ export function FilesClient({
       ) : null}
 
       {files.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center py-12 text-center">
-            <FileIcon className="mb-3 size-8 text-muted-foreground" />
-            <p className="font-medium">No files yet</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Upload a text, PDF, or DOCX file to use it as chat context.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="mt-8 flex flex-col items-center rounded-[16px] border border-shell-line px-6 py-16 text-center">
+          <img src="/brand/nav/files.svg" alt="" width={20} height={20} />
+          <p className="mt-3 font-medium text-white">No files yet</p>
+          <p className="mt-1 max-w-sm text-sm text-[#a1a1aa]">
+            Upload a text, PDF, or DOCX file to use it as chat context.
+          </p>
+        </div>
       ) : (
-        <Card className="gap-0 overflow-hidden py-0">
+        <div className="mt-8 overflow-hidden rounded-[16px] border border-shell-line">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>File</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Size</TableHead>
-                <TableHead>Uploader</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+              <TableRow className="border-shell-line hover:bg-transparent">
+                <TableHead className="h-11 px-4 text-sm text-shell-muted">
+                  File
+                </TableHead>
+                <TableHead className="h-11 text-sm text-shell-muted">
+                  Type
+                </TableHead>
+                <TableHead className="h-11 text-sm text-shell-muted">
+                  Size
+                </TableHead>
+                <TableHead className="h-11 text-sm text-shell-muted">
+                  Uploader
+                </TableHead>
+                <TableHead className="h-11 text-sm text-shell-muted">
+                  Created
+                </TableHead>
+                <TableHead className="h-11 text-sm text-shell-muted">
+                  Status
+                </TableHead>
+                <TableHead className="h-11 text-right text-sm text-shell-muted">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -208,9 +236,22 @@ export function FilesClient({
                 const canDelete =
                   isAdmin || file.uploadedById === currentUserId;
                 return (
-                  <TableRow key={file.id}>
-                    <TableCell className="max-w-64 whitespace-normal">
-                      <div className="font-medium">{file.filename}</div>
+                  <TableRow
+                    key={file.id}
+                    className="h-14 border-shell-line hover:bg-shell-hover"
+                  >
+                    <TableCell className="max-w-64 px-4 whitespace-normal">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src="/brand/nav/files.svg"
+                          alt=""
+                          width={20}
+                          height={20}
+                        />
+                        <div className="min-w-0 font-medium text-white">
+                          {file.filename}
+                        </div>
+                      </div>
                       {file.failureMessage ? (
                         <p className="mt-1 text-xs text-destructive">
                           {file.failureMessage}
@@ -222,13 +263,17 @@ export function FilesClient({
                         </p>
                       ) : null}
                     </TableCell>
-                    <TableCell>{formatType(file)}</TableCell>
-                    <TableCell>{formatBytes(file.sizeBytes)}</TableCell>
-                    <TableCell>
+                    <TableCell className="text-[#a1a1aa]">
+                      {formatType(file)}
+                    </TableCell>
+                    <TableCell className="text-[#a1a1aa]">
+                      {formatBytes(file.sizeBytes)}
+                    </TableCell>
+                    <TableCell className="text-[#a1a1aa]">
                       {file.uploadedBy?.name ??
                         (file.uploadedById === currentUserId ? 'You' : '—')}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="text-[#a1a1aa]">
                       <time dateTime={file.createdAt}>
                         {new Date(file.createdAt).toLocaleDateString()}
                       </time>
@@ -246,8 +291,26 @@ export function FilesClient({
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-shell-muted hover:bg-shell-active hover:text-white"
+                          onClick={() => void copyFilename(file)}
+                          aria-label={
+                            copiedId === file.id
+                              ? `Copied ${file.filename}`
+                              : `Copy ${file.filename}`
+                          }
+                        >
+                          <CopyIcon />
+                        </Button>
                         {file.processingStatus === 'READY' ? (
-                          <Button variant="ghost" size="icon" asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-shell-muted hover:bg-shell-active hover:text-white"
+                            asChild
+                          >
                             <a
                               href={`/api/files/${file.id}/download`}
                               aria-label={`Download ${file.filename}`}
@@ -260,6 +323,7 @@ export function FilesClient({
                           <Button
                             variant="ghost"
                             size="icon"
+                            className="text-shell-muted hover:bg-shell-active hover:text-white"
                             onClick={() => setDeleteTarget(file)}
                             disabled={deletingId === file.id}
                             aria-label={`Delete ${file.filename}`}
@@ -278,7 +342,7 @@ export function FilesClient({
               })}
             </TableBody>
           </Table>
-        </Card>
+        </div>
       )}
 
       <AlertDialog

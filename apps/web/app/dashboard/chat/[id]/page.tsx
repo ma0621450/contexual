@@ -19,6 +19,7 @@ export default async function ChatConversationPage({
       models={models}
       initialFiles={files}
       isAdmin={user.role === 'ADMIN'}
+      firstName={user.name?.trim().split(/\s+/)[0] || 'there'}
       initialConversationId={id}
     />
   );

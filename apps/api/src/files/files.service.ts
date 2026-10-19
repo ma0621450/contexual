@@ -69,7 +69,7 @@ export class FilesService {
     const sniffed = sniffFileContent(file.buffer);
     if (!sniffed) {
       throw new BadRequestException(
-        'Unsupported file content. Upload TXT, Markdown, CSV, JSON, PDF, or DOCX files.',
+        'Unsupported file content. Upload PNG, JPEG, GIF, WEBP, TXT, Markdown, CSV, JSON, PDF, or DOCX files.',
       );
     }
     const organization = await this.prisma.organization.findUnique({

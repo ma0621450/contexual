@@ -4,7 +4,14 @@ import {
   getSafeAuditDetails,
   humanizeAuditAction,
 } from '@/lib/audit-format';
-import { Card, CardContent } from '@/components/ui/card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 const ACTION_LABELS: Record<string, string> = {
   'provider.connected': 'Connected AI provider',
@@ -49,68 +56,130 @@ export default async function AuditPage() {
   const logs = await getAuditLogs();
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
-      <div className="mb-6">
-        <h2 className="text-xl font-semibold tracking-tight">Audit log</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+    <div className="mx-auto w-full max-w-[1070px] px-4 pt-8 pb-10 sm:px-6">
+      <div>
+        <h1 className="text-[30px] leading-9 font-semibold tracking-[-0.6px] text-white">
+          Audit Logs
+        </h1>
+        <p className="mt-1 text-sm text-[#a1a1aa]">
           Recent sensitive actions in your organization.
         </p>
       </div>
 
-      {logs.length === 0 ? (
-        <Card className="py-0">
-          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+      <section className="mt-8 overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]">
+        {logs.length === 0 ? (
+          <p className="px-5 py-12 text-center text-sm text-[#8b8b93]">
             No activity recorded yet.
-          </CardContent>
-        </Card>
-      ) : (
-        <Card className="gap-0 py-0">
-          <ul className="divide-y divide-border">
-            {logs.map((log) => {
-              const details = getSafeAuditDetails(log.details);
-              return (
-                <li key={log.id} className="px-5 py-3.5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">
+          </p>
+        ) : (
+          <>
+            <ul className="divide-y divide-white/10 md:hidden">
+              {logs.map((log) => {
+                const details = getSafeAuditDetails(log.details);
+                return (
+                  <li key={log.id} className="px-4 py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-sm font-medium text-white">
                         {ACTION_LABELS[log.action] ??
                           humanizeAuditAction(log.action)}
                       </p>
-                      <p className="text-xs text-muted-foreground">
-                        {log.actorName ?? 'System'}
-                        {log.actorEmail ? ` · ${log.actorEmail}` : ''}
-                      </p>
+                      <time
+                        dateTime={log.createdAt}
+                        className="shrink-0 text-xs text-[#a1a1aa]"
+                      >
+                        {formatAuditTime(log.createdAt)}
+                      </time>
                     </div>
-                    <time
-                      dateTime={log.createdAt}
-                      className="shrink-0 text-xs text-muted-foreground"
-                    >
-                      {new Date(log.createdAt).toLocaleString()}
-                    </time>
-                  </div>
-                  {details.length ? (
-                    <details className="mt-2 text-xs">
-                      <summary className="w-fit cursor-pointer rounded text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                        View details
-                      </summary>
-                      <dl className="mt-2 grid gap-1 rounded-lg bg-muted/50 p-3 sm:grid-cols-[auto_1fr] sm:gap-x-4">
-                        {details.map(([label, value]) => (
-                          <div key={label} className="contents">
-                            <dt className="font-medium text-muted-foreground">
-                              {label}
-                            </dt>
-                            <dd className="break-all">{value}</dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </details>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        </Card>
-      )}
+                    <p className="mt-1 text-sm text-white">
+                      {log.actorName ?? 'System'}
+                    </p>
+                    {log.actorEmail ? (
+                      <p className="text-xs text-[#8b8b93]">{log.actorEmail}</p>
+                    ) : null}
+                    <AuditDetails details={details} />
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-white/10 hover:bg-transparent">
+                    <TableHead className="text-[#8b8b93]">Action</TableHead>
+                    <TableHead className="text-[#8b8b93]">Member</TableHead>
+                    <TableHead className="text-right text-[#8b8b93]">
+                      When
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {logs.map((log) => {
+                    const details = getSafeAuditDetails(log.details);
+                    return (
+                      <TableRow key={log.id} className="border-white/10">
+                        <TableCell className="whitespace-normal">
+                          <p className="font-medium text-white">
+                            {ACTION_LABELS[log.action] ??
+                              humanizeAuditAction(log.action)}
+                          </p>
+                          <AuditDetails details={details} />
+                        </TableCell>
+                        <TableCell className="whitespace-normal">
+                          <p className="text-white">
+                            {log.actorName ?? 'System'}
+                          </p>
+                          {log.actorEmail ? (
+                            <p className="text-xs text-[#8b8b93]">
+                              {log.actorEmail}
+                            </p>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="text-right whitespace-normal">
+                          <time
+                            dateTime={log.createdAt}
+                            className="text-xs text-[#a1a1aa]"
+                          >
+                            {formatAuditTime(log.createdAt)}
+                          </time>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        )}
+      </section>
     </div>
+  );
+}
+
+function formatAuditTime(createdAt: string) {
+  return new Date(createdAt).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function AuditDetails({ details }: { details: [string, string][] }) {
+  if (!details.length) return null;
+  return (
+    <details className="mt-2 text-xs">
+      <summary className="w-fit cursor-pointer rounded text-[#8b8b93] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40">
+        View details
+      </summary>
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-lg bg-black/25 p-3">
+        {details.map(([label, value]) => (
+          <div key={label} className="contents">
+            <dt className="text-[#8b8b93]">{label}</dt>
+            <dd className="break-all text-white">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
   );
 }

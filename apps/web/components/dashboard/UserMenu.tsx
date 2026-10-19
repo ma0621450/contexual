@@ -33,9 +33,9 @@ export function UserMenu({ name, email, role }: UserMenuProps) {
         <button
           type="button"
           aria-label="Account menu"
-          className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/50"
         >
-          <Avatar className="size-8 border border-border">
+          <Avatar className="size-8">
             <AvatarFallback>{initials || 'U'}</AvatarFallback>
           </Avatar>
         </button>
@@ -54,7 +54,7 @@ export function UserMenu({ name, email, role }: UserMenuProps) {
         <DropdownMenuItem asChild>
           <Link href="/dashboard/settings">
             <SettingsIcon className="size-4" />
-            Settings
+            Preferences
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />

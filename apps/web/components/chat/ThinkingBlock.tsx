@@ -1,8 +1,19 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { BrainIcon, ChevronDownIcon, ChevronRightIcon } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { ChevronDownIcon, ChevronRightIcon } from 'lucide-react';
+
+function ThinkingPill({ label = 'Thinking' }: { label?: string }) {
+  return (
+    <span className="thinking-pill" role="status">
+      <span className="thinking-pill-spark" aria-hidden="true" />
+      <span>
+        {label}
+        <span className="thinking-ellipsis" aria-hidden="true" />
+      </span>
+    </span>
+  );
+}
 
 export function ThinkingBlock({
   content,
@@ -21,54 +32,50 @@ export function ThinkingBlock({
 
   const empty = content.trim().length === 0;
 
+  if (streaming) {
+    return (
+      <div className="my-3">
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="rounded-full focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none"
+          aria-expanded={open}
+          aria-label="Thinking"
+        >
+          <ThinkingPill />
+        </button>
+        {open && !empty ? (
+          <div className="thinking-process mt-3 max-w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
+            <pre className="max-h-64 overflow-auto font-sans text-[13px] leading-6 whitespace-pre-wrap text-[#a1a1aa]">
+              {content}
+              <span className="ml-0.5 inline-block h-4 w-px animate-pulse bg-[#d4d4d8] align-text-bottom" />
+            </pre>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
-    <div
-      className={cn(
-        'my-3 overflow-hidden rounded-xl border border-border/80 bg-muted/30',
-        streaming && 'border-primary/25',
-      )}
-    >
+    <div className="my-3 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-[#d4d4d8] transition-colors hover:bg-white/[0.04]"
         aria-expanded={open}
       >
-        <span
-          className={cn(
-            'flex size-6 items-center justify-center rounded-md bg-primary/10 text-primary',
-            streaming && 'animate-pulse',
-          )}
-        >
-          <BrainIcon className="size-3.5" />
-        </span>
-        <span className="flex-1 font-medium text-foreground">
-          {streaming ? 'Thinking' : 'Thought process'}
-        </span>
-        {streaming ? (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-            <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
-            <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
-            <span className="size-1.5 animate-bounce rounded-full bg-current" />
-          </span>
-        ) : null}
+        <span className="flex-1 font-medium">Thought process</span>
         {open ? (
-          <ChevronDownIcon className="size-4 text-muted-foreground" />
+          <ChevronDownIcon className="size-4 text-[#737373]" />
         ) : (
-          <ChevronRightIcon className="size-4 text-muted-foreground" />
+          <ChevronRightIcon className="size-4 text-[#737373]" />
         )}
       </button>
       {open ? (
-        <div className="border-t border-border/70 px-3 py-2.5">
-          {empty ? (
-            <p className="text-sm text-muted-foreground italic">
-              Analyzing the request…
-            </p>
-          ) : (
-            <pre className="max-h-64 overflow-auto font-sans text-[13px] leading-6 whitespace-pre-wrap text-muted-foreground">
-              {content}
-            </pre>
-          )}
+        <div className="thinking-process border-t border-white/10 px-3 py-2.5">
+          <pre className="max-h-64 overflow-auto font-sans text-[13px] leading-6 whitespace-pre-wrap text-[#a1a1aa]">
+            {empty ? 'No reasoning was recorded.' : content}
+          </pre>
         </div>
       ) : null}
     </div>
@@ -76,17 +83,5 @@ export function ThinkingBlock({
 }
 
 export function AnalyzingIndicator() {
-  return (
-    <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
-      <span className="flex size-7 items-center justify-center rounded-md bg-primary/10 text-primary">
-        <BrainIcon className="size-3.5 animate-pulse" />
-      </span>
-      <span className="font-medium text-foreground">Analyzing</span>
-      <span className="flex items-center gap-1">
-        <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
-        <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
-        <span className="size-1.5 animate-bounce rounded-full bg-current" />
-      </span>
-    </div>
-  );
+  return <ThinkingPill />;
 }

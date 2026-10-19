@@ -43,6 +43,7 @@ type PromptAttachment = {
   id: string;
   filename: string;
   extractedText: string | null;
+  mimeType?: string | null;
 };
 
 type PromptHistoryMessage = {
@@ -965,7 +966,12 @@ export class ChatService {
           attachments: {
             select: {
               file: {
-                select: { id: true, filename: true, extractedText: true },
+                select: {
+                  id: true,
+                  filename: true,
+                  extractedText: true,
+                  mimeType: true,
+                },
               },
             },
           },
@@ -1176,7 +1182,12 @@ export class ChatService {
           attachments: {
             select: {
               file: {
-                select: { id: true, filename: true, extractedText: true },
+                select: {
+                  id: true,
+                  filename: true,
+                  extractedText: true,
+                  mimeType: true,
+                },
               },
             },
           },
@@ -1562,7 +1573,12 @@ export class ChatService {
           attachments: {
             select: {
               file: {
-                select: { id: true, filename: true, extractedText: true },
+                select: {
+                  id: true,
+                  filename: true,
+                  extractedText: true,
+                  mimeType: true,
+                },
               },
             },
           },
@@ -2021,7 +2037,14 @@ export class ChatService {
             ),
           ].join('\n')
         : '';
-    const usableAttachments = attachments.filter((file) => file.extractedText);
+    const imageAttachments = attachments.filter(
+      (file) =>
+        file.mimeType?.startsWith('image/') ||
+        /\.(png|jpe?g|gif|webp)$/i.test(file.filename),
+    );
+    const usableAttachments = attachments.filter(
+      (file) => file.extractedText && !imageAttachments.includes(file),
+    );
     const perAttachmentLimit =
       usableAttachments.length > 0
         ? Math.max(
@@ -2031,11 +2054,17 @@ export class ChatService {
             ),
           )
         : MAX_ATTACHMENT_CONTEXT_CHARACTERS;
-    const attachmentPrompt = usableAttachments
-      .map(
+    const attachmentPrompt = [
+      ...usableAttachments.map(
         (file) =>
           `<attachment filename="${file.filename}">\n${this.getAttachmentExcerpt(file.extractedText ?? '', perAttachmentLimit)}\n</attachment>`,
-      )
+      ),
+      ...imageAttachments.map(
+        (file) =>
+          `<attachment filename="${file.filename}" type="image">The user attached this image. The image file is stored with the message.</attachment>`,
+      ),
+    ]
+      .filter(Boolean)
       .join('\n\n');
     const completeUserContent = [
       userContent,

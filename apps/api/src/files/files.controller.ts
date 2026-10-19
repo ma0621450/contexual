@@ -83,10 +83,11 @@ export class FilesController {
       organizationId,
       fileId,
     );
-    res.setHeader('Content-Type', file.detectedMimeType ?? file.mimeType);
+    const mediaType = file.detectedMimeType ?? file.mimeType;
+    res.setHeader('Content-Type', mediaType);
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+      `${mediaType.startsWith('image/') ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
     );
     res.send(body);
   }

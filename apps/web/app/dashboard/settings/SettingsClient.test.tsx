@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsClient } from './SettingsClient';
@@ -21,7 +21,7 @@ describe('SettingsClient validation', () => {
     render(<SettingsClient name="Member" email="member@example.com" />);
     const name = screen.getByLabelText('Name');
     await userEvent.clear(name);
-    await userEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     expect(screen.getByText('Name is required')).toBeInTheDocument();
     expect(mocks.apiFetch).not.toHaveBeenCalled();
@@ -29,17 +29,24 @@ describe('SettingsClient validation', () => {
 
   it('rejects mismatched passwords before making a request', async () => {
     render(<SettingsClient name="Member" email="member@example.com" />);
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Change Password' }),
+    );
+    const dialog = screen.getByRole('dialog');
     await userEvent.type(
-      screen.getByLabelText('Current password'),
+      within(dialog).getByLabelText('Current password'),
       'old-password',
     );
-    await userEvent.type(screen.getByLabelText('New password'), 'new-password');
     await userEvent.type(
-      screen.getByLabelText('Confirm new password'),
+      within(dialog).getByLabelText('New password'),
+      'new-password',
+    );
+    await userEvent.type(
+      within(dialog).getByLabelText('Confirm new password'),
       'different-password',
     );
     await userEvent.click(
-      screen.getByRole('button', { name: 'Change password' }),
+      within(dialog).getByRole('button', { name: 'Change Password' }),
     );
 
     expect(screen.getByText('New passwords do not match')).toBeInTheDocument();

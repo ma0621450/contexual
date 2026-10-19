@@ -127,6 +127,7 @@ export type ChatMessage = {
     filename: string;
     mimeType: string;
     sizeBytes: number;
+    previewUrl?: string;
   }[];
 };
 

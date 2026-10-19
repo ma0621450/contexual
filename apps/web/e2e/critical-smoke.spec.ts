@@ -40,7 +40,9 @@ test('login returns an existing user to the dashboard', async ({
   await page.getByRole('button', { name: 'Sign in' }).click();
 
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Hello, Playwright' }),
+  ).toBeVisible();
 });
 
 test('onboarding creates a workspace and file lifecycle is visible', async ({
@@ -95,9 +97,9 @@ test('member navigation excludes admin audit access', async ({
     await memberPage.goto(
       process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:3000',
     );
-    await expect(memberPage.getByText('My usage').first()).toBeVisible();
+    await expect(memberPage.getByRole('link', { name: 'Billing' })).toBeVisible();
     await expect(
-      memberPage.getByRole('link', { name: /Audit log/ }),
+      memberPage.getByRole('link', { name: 'Audit Logs' }),
     ).toHaveCount(0);
   } finally {
     await memberContext.close();
