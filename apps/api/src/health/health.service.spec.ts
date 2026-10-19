@@ -1,5 +1,5 @@
 import { ServiceUnavailableException } from '@nestjs/common';
-import { HealthService } from './health.service';
+import { HealthService, REQUIRED_SCHEMA } from './health.service';
 
 describe('HealthService', () => {
   const prisma = { $queryRaw: jest.fn() };
@@ -11,9 +11,24 @@ describe('HealthService', () => {
     storage as never,
   );
 
+  function mockDatabase(
+    columns: ReadonlyArray<readonly [string, string]> = REQUIRED_SCHEMA,
+  ) {
+    prisma.$queryRaw.mockImplementation((strings: TemplateStringsArray) =>
+      Promise.resolve(
+        strings.join('').includes('information_schema')
+          ? columns.map(([table_name, column_name]) => ({
+              table_name,
+              column_name,
+            }))
+          : [{ '?column?': 1 }],
+      ),
+    );
+  }
+
   beforeEach(() => {
     jest.resetAllMocks();
-    prisma.$queryRaw.mockResolvedValue([{ '?column?': 1 }]);
+    mockDatabase();
     clamAv.checkReady.mockResolvedValue(undefined);
     storage.checkReady.mockResolvedValue(undefined);
   });
@@ -23,6 +38,7 @@ describe('HealthService', () => {
       status: 'ready',
       dependencies: {
         postgres: 'ok',
+        schema: 'ok',
         clamav: 'ok',
         storage: 'ok',
       },
@@ -38,10 +54,24 @@ describe('HealthService', () => {
         status: 'unready',
         dependencies: {
           postgres: 'unavailable',
+          schema: 'unavailable',
           clamav: 'unavailable',
           storage: 'ok',
         },
       },
     } satisfies Partial<ServiceUnavailableException>);
+  });
+
+  it('stays unready until pending migrations have been applied', async () => {
+    mockDatabase(
+      REQUIRED_SCHEMA.filter(([table]) => table !== 'RateLimitBucket'),
+    );
+
+    await expect(service.ready()).rejects.toMatchObject({
+      response: {
+        status: 'unready',
+        dependencies: { postgres: 'ok', schema: 'unavailable' },
+      },
+    });
   });
 });

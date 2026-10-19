@@ -3,7 +3,18 @@ import { PrismaService } from '../database/prisma.service';
 import { ClamAvService } from '../files/clamav.service';
 import { StorageService } from '../files/storage.service';
 
-type DependencyName = 'postgres' | 'clamav' | 'storage';
+type DependencyName = 'postgres' | 'schema' | 'clamav' | 'storage';
+
+/**
+ * Columns introduced by the most recent migrations. Readiness stays red until
+ * `prisma migrate deploy` has run, so traffic never reaches code whose
+ * tables are missing. Extend when a release depends on new schema.
+ */
+export const REQUIRED_SCHEMA: ReadonlyArray<[table: string, column: string]> = [
+  ['Invite', 'emailProofHash'],
+  ['EmailOutbox', 'contentRedactedAt'],
+  ['RateLimitBucket', 'resetAt'],
+];
 
 @Injectable()
 export class HealthService {
@@ -20,6 +31,7 @@ export class HealthService {
   async ready() {
     const checks: Array<[DependencyName, () => Promise<unknown>]> = [
       ['postgres', () => this.prisma.$queryRaw`SELECT 1`],
+      ['schema', () => this.checkSchema()],
       ['clamav', () => this.clamAv.checkReady()],
       ['storage', () => this.storage.checkReady()],
     ];
@@ -40,5 +52,24 @@ export class HealthService {
       });
     }
     return { status: 'ready' as const, dependencies };
+  }
+
+  private async checkSchema() {
+    const tables = [...new Set(REQUIRED_SCHEMA.map(([table]) => table))];
+    const rows = await this.prisma.$queryRaw<
+      Array<{ table_name: string; column_name: string }>
+    >`
+      SELECT table_name, column_name
+      FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = ANY(${tables})
+    `;
+    const present = new Set(
+      rows.map((row) => `${row.table_name}.${row.column_name}`),
+    );
+    const missing = REQUIRED_SCHEMA.filter(
+      ([table, column]) => !present.has(`${table}.${column}`),
+    );
+    if (missing.length > 0) throw new Error('Database schema is out of date');
   }
 }

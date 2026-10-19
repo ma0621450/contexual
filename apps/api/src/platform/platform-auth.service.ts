@@ -15,22 +15,18 @@ import {
 import { PlatformTokenService } from './platform-token.service';
 import type { PlatformAdminContext } from './platform.types';
 import { buildOtpAuthUrl, generateTotpSecret, verifyTotp } from './totp.util';
-
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_MS = 15 * 60 * 1000;
-
-type AttemptRecord = { count: number; firstAttemptAt: number };
+import { RATE_LIMITS } from '../rate-limit/rate-limit.policies';
+import { RateLimitService } from '../rate-limit/rate-limit.service';
 
 @Injectable()
 export class PlatformAuthService {
-  private readonly attempts = new Map<string, AttemptRecord>();
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly credentials: PlatformCredentialsService,
     private readonly encryption: EncryptionService,
     private readonly tokens: PlatformTokenService,
     private readonly audit: PlatformAuditService,
+    private readonly rateLimits: RateLimitService,
   ) {}
 
   async login(
@@ -41,11 +37,11 @@ export class PlatformAuthService {
     ipAddress: string | null,
   ) {
     const key = normalizeEmail(email);
-    this.assertNotLockedOut(key);
+    await this.assertNotLockedOut(key, ipAddress);
 
     const admin = await this.credentials.verify(email, password);
     if (!admin) {
-      this.recordFailure(key);
+      await this.recordFailure(key);
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -57,7 +53,7 @@ export class PlatformAuthService {
     }
 
     if (!totp || !this.verifyStoredTotp(admin, totp)) {
-      this.recordFailure(key);
+      await this.recordFailure(key);
       await this.audit.record({
         platformAdminId: admin.id,
         action: 'platform.login_failed',
@@ -69,7 +65,7 @@ export class PlatformAuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    this.attempts.delete(key);
+    await this.rateLimits.reset(RATE_LIMITS.platformLoginAccount, key);
     return this.issueSession(admin.id, res, ipAddress);
   }
 
@@ -81,16 +77,16 @@ export class PlatformAuthService {
     ipAddress: string | null,
   ) {
     const key = normalizeEmail(email);
-    this.assertNotLockedOut(key);
+    await this.assertNotLockedOut(key, ipAddress);
 
     const admin = await this.credentials.verify(email, password);
     if (!admin || admin.totpConfirmedAt) {
-      this.recordFailure(key);
+      await this.recordFailure(key);
       throw new UnauthorizedException('Invalid credentials');
     }
 
     if (!this.verifyStoredTotp(admin, totp)) {
-      this.recordFailure(key);
+      await this.recordFailure(key);
       throw new UnauthorizedException('Invalid authentication code');
     }
 
@@ -99,7 +95,7 @@ export class PlatformAuthService {
       data: { totpConfirmedAt: new Date() },
     });
 
-    this.attempts.delete(key);
+    await this.rateLimits.reset(RATE_LIMITS.platformLoginAccount, key);
     await this.audit.record({
       platformAdminId: admin.id,
       action: 'platform.totp_enrolled',
@@ -232,7 +228,7 @@ export class PlatformAuthService {
 
     return {
       secret,
-      otpauthUrl: buildOtpAuthUrl(secret, admin.email, 'Contexual Platform'),
+      otpauthUrl: buildOtpAuthUrl(secret, admin.email, 'PromplexAI Platform'),
     };
   }
 
@@ -252,28 +248,18 @@ export class PlatformAuthService {
     }
   }
 
-  private assertNotLockedOut(key: string) {
-    const record = this.attempts.get(key);
-    if (!record) return;
-
-    if (Date.now() - record.firstAttemptAt > LOCKOUT_MS) {
-      this.attempts.delete(key);
-      return;
-    }
-
-    if (record.count >= MAX_ATTEMPTS) {
-      throw new UnauthorizedException(
-        'Too many failed attempts. Try again later.',
-      );
-    }
+  private async assertNotLockedOut(key: string, ipAddress: string | null) {
+    await this.rateLimits.consume(
+      RATE_LIMITS.platformLoginIp,
+      ipAddress ?? 'unknown',
+    );
+    await this.rateLimits.assertAvailable(
+      RATE_LIMITS.platformLoginAccount,
+      key,
+    );
   }
 
-  private recordFailure(key: string) {
-    const record = this.attempts.get(key);
-    if (!record || Date.now() - record.firstAttemptAt > LOCKOUT_MS) {
-      this.attempts.set(key, { count: 1, firstAttemptAt: Date.now() });
-      return;
-    }
-    record.count += 1;
+  private async recordFailure(key: string) {
+    await this.rateLimits.hit(RATE_LIMITS.platformLoginAccount, key);
   }
 }

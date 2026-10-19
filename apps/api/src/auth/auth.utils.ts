@@ -15,6 +15,18 @@ export async function verifyPassword(
   return bcrypt.compare(password, passwordHash);
 }
 
+let dummyPasswordHash: Promise<string> | undefined;
+
+/** Spends the same bcrypt work as a real check so unknown emails are not faster. */
+export async function verifyAgainstDummyHash(password: string): Promise<false> {
+  dummyPasswordHash ??= bcrypt.hash(
+    randomBytes(16).toString('hex'),
+    BCRYPT_ROUNDS,
+  );
+  await bcrypt.compare(password, await dummyPasswordHash);
+  return false;
+}
+
 export function generateRefreshToken(): string {
   return randomBytes(48).toString('base64url');
 }
@@ -29,6 +41,11 @@ export function generateOtp(): string {
 
 export function hashOtp(otp: string): string {
   return createHash('sha256').update(otp).digest('hex');
+}
+
+/** Random per send: an OTP-derived key would expose the code, which is only 4 digits. */
+export function verificationIdempotencyKey(userId: string): string {
+  return `verification:${userId}:${randomBytes(12).toString('hex')}`;
 }
 
 export function isDevOtpAllowed(otp: string, mailConfigured: boolean): boolean {

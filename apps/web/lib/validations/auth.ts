@@ -1,13 +1,58 @@
 import { z } from 'zod';
 
+const newPassword = z
+  .string()
+  .min(8, 'Password must be at least 8 characters')
+  .max(128, 'Password must be at most 128 characters');
+
 export const registerSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(100),
   email: z.string().trim().email('Enter a valid email address'),
-  password: z
-    .string()
-    .min(8, 'Password must be at least 8 characters')
-    .max(128),
+  password: newPassword,
 });
+
+export const signupFormSchema = registerSchema
+  .extend({ confirmPassword: z.string().min(1, 'Confirm your password') })
+  .refine((value) => value.password === value.confirmPassword, {
+    message: 'Passwords do not match',
+    path: ['confirmPassword'],
+  });
+
+export const inviteSignupSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(100),
+  password: newPassword,
+});
+
+export const ORGANIZATION_TYPES = [
+  { value: 'DESIGN_AGENCY', label: 'Design Agency' },
+  { value: 'CREATIVE_STUDIO', label: 'Creative Studio' },
+  { value: 'BRAND_CONSULTANCY', label: 'Brand Consultancy' },
+  { value: 'UX_RESEARCH_FIRM', label: 'UX Research Firm' },
+] as const;
+
+export const TEAM_SIZES = [
+  { value: 'JUST_ME', label: 'Just me' },
+  { value: 'SIZE_2_10', label: '2–10' },
+  { value: 'SIZE_11_25', label: '11–25' },
+  { value: 'SIZE_26_100', label: '26–100' },
+  { value: 'SIZE_100_PLUS', label: '100+' },
+] as const;
+
+export type OrganizationTypeValue = (typeof ORGANIZATION_TYPES)[number]['value'];
+export type TeamSizeValue = (typeof TEAM_SIZES)[number]['value'];
+
+export const WORKSPACE_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+export const workspaceSlugSchema = z
+  .string()
+  .trim()
+  .min(1, 'Click the generate icon or type a workspace URL')
+  .min(3, 'Use at least 3 characters')
+  .max(48, 'Use at most 48 characters')
+  .regex(
+    WORKSPACE_SLUG_PATTERN,
+    'Use lowercase letters, numbers, or single hyphens',
+  );
 
 export const loginSchema = z.object({
   email: z.string().trim().email('Enter a valid email address'),
@@ -28,6 +73,22 @@ export const createOrganizationSchema = z.object({
     .min(2, 'Organization name must be at least 2 characters')
     .max(100, 'Organization name must be at most 100 characters')
     .regex(/[A-Za-z0-9]/, 'Organization name must include letters or numbers'),
+  slug: workspaceSlugSchema,
+  organizationType: z.enum(
+    ORGANIZATION_TYPES.map((option) => option.value) as [
+      OrganizationTypeValue,
+      ...OrganizationTypeValue[],
+    ],
+    { errorMap: () => ({ message: 'Choose your organization type' }) },
+  ),
+  teamSize: z
+    .enum(
+      TEAM_SIZES.map((option) => option.value) as [
+        TeamSizeValue,
+        ...TeamSizeValue[],
+      ],
+    )
+    .optional(),
 });
 
 export const joinOrganizationSchema = z.object({
@@ -40,10 +101,7 @@ export const forgotPasswordSchema = z.object({
 
 export const resetPasswordSchema = z.object({
   token: z.string().min(1, 'Reset token is required'),
-  password: z
-    .string()
-    .min(8, 'Password must be at least 8 characters')
-    .max(128),
+  password: newPassword,
 });
 
 export const updateProfileSchema = z.object({

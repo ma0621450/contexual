@@ -8,7 +8,7 @@ export default async function OnboardingRoutePage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
+        <div className="flex min-h-screen items-center justify-center bg-base text-[16px] text-sub">
           Loading…
         </div>
       }

@@ -3,11 +3,13 @@ import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { validateRuntimeConfig } from './config/runtime-config';
+import { applyTrustProxy } from './config/trust-proxy';
 
 async function bootstrap() {
   validateRuntimeConfig();
   const app = await NestFactory.create(AppModule, { rawBody: true });
 
+  applyTrustProxy(app);
   app.use(cookieParser());
   app.setGlobalPrefix('api');
   app.useGlobalPipes(

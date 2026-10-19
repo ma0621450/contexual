@@ -59,10 +59,10 @@ describe('totp', () => {
   });
 
   it('builds a scannable provisioning url', () => {
-    const url = buildOtpAuthUrl('ABCDEFGH', 'staff@example.com', 'Contexual');
+    const url = buildOtpAuthUrl('ABCDEFGH', 'staff@example.com', 'PromplexAI');
 
-    expect(url).toContain('otpauth://totp/Contexual%3Astaff%40example.com');
+    expect(url).toContain('otpauth://totp/PromplexAI%3Astaff%40example.com');
     expect(url).toContain('secret=ABCDEFGH');
-    expect(url).toContain('issuer=Contexual');
+    expect(url).toContain('issuer=PromplexAI');
   });
 });

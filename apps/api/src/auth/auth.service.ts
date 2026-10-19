@@ -12,10 +12,14 @@ import {
   hashPassword,
   hashPasswordResetToken,
   isDevOtpAllowed,
+  verificationIdempotencyKey,
+  verifyAgainstDummyHash,
   verifyPassword,
 } from './auth.utils';
 import type { AuthUser } from './auth.types';
 import { MailService } from '../mail/mail.service';
+import { RATE_LIMITS } from '../rate-limit/rate-limit.policies';
+import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { SessionsService } from '../sessions/sessions.service';
 import { UsersService } from '../users/users.service';
 
@@ -26,6 +30,7 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly sessionsService: SessionsService,
     private readonly mailService: MailService,
+    private readonly rateLimits: RateLimitService,
   ) {}
 
   private webUrl(): string {
@@ -35,22 +40,41 @@ export class AuthService {
   async validateUser(
     email: string,
     password: string,
+    ip: string,
   ): Promise<AuthUser | null> {
+    const account = email.trim().toLowerCase();
+    const accountFromIp = `${account}|${ip}`;
+    await this.rateLimits.consume(RATE_LIMITS.loginIp, ip);
+    await this.rateLimits.assertAvailable(
+      RATE_LIMITS.loginAccountIp,
+      accountFromIp,
+    );
+    await this.rateLimits.assertAvailable(RATE_LIMITS.loginAccount, account);
+
     const user = await this.usersService.findByEmailWithMemberships(email);
+    const valid = user
+      ? await verifyPassword(password, user.passwordHash)
+      : await verifyAgainstDummyHash(password);
 
-    if (!user) {
+    if (!user || !valid) {
+      await this.rateLimits.hit(RATE_LIMITS.loginAccountIp, accountFromIp);
+      await this.rateLimits.hit(RATE_LIMITS.loginAccount, account);
       return null;
     }
 
-    const valid = await verifyPassword(password, user.passwordHash);
-    if (!valid) {
-      return null;
-    }
-
+    await this.rateLimits.reset(RATE_LIMITS.loginAccountIp, accountFromIp);
+    await this.rateLimits.reset(RATE_LIMITS.loginAccount, account);
     return user;
   }
 
-  async register(name: string, email: string, password: string, res: Response) {
+  async register(
+    name: string,
+    email: string,
+    password: string,
+    res: Response,
+    ip: string,
+  ) {
+    await this.rateLimits.consume(RATE_LIMITS.registerIp, ip);
     const passwordHash = await hashPassword(password);
     const user = await this.usersService.createUser(name, email, passwordHash);
 
@@ -60,7 +84,7 @@ export class AuthService {
       user.email,
       user.name,
       otp,
-      `verification:${user.id}:${hashOtp(otp)}`,
+      verificationIdempotencyKey(user.id),
     );
 
     await this.sessionsService.createSession(user, res);
@@ -80,35 +104,41 @@ export class AuthService {
     };
   }
 
-  async verifyEmail(user: AuthUser, otp: string, res: Response) {
+  async verifyEmail(user: AuthUser, otp: string, res: Response, ip: string) {
     if (user.emailVerifiedAt) {
       return { redirectTo: '/onboarding' };
     }
 
-    const mailConfigured = this.mailService.isConfigured();
-    if (isDevOtpAllowed(otp, mailConfigured)) {
-      const updatedUser = await this.usersService.markEmailVerified(user.id);
-      await this.sessionsService.createSession(updatedUser, res);
-      return { redirectTo: '/onboarding' };
-    }
+    await this.rateLimits.consume(RATE_LIMITS.otpVerifyIp, ip);
+    await this.rateLimits.assertAvailable(RATE_LIMITS.otpVerifyUser, user.id);
+    await this.rateLimits.assertAvailable(
+      RATE_LIMITS.otpVerifyUserDaily,
+      user.id,
+    );
 
-    const record = await this.usersService.findForOtpVerification(user.id);
-    if (
-      !record?.emailVerificationOtpHash ||
-      !record.emailVerificationOtpExpiresAt ||
-      record.emailVerificationOtpExpiresAt < new Date() ||
-      record.emailVerificationOtpHash !== hashOtp(otp)
-    ) {
-      throw new UnauthorizedException('Invalid or expired verification code');
+    const mailConfigured = this.mailService.isConfigured();
+    if (!isDevOtpAllowed(otp, mailConfigured)) {
+      const record = await this.usersService.findForOtpVerification(user.id);
+      if (
+        !record?.emailVerificationOtpHash ||
+        !record.emailVerificationOtpExpiresAt ||
+        record.emailVerificationOtpExpiresAt < new Date() ||
+        record.emailVerificationOtpHash !== hashOtp(otp)
+      ) {
+        await this.rateLimits.hit(RATE_LIMITS.otpVerifyUser, user.id);
+        await this.rateLimits.hit(RATE_LIMITS.otpVerifyUserDaily, user.id);
+        throw new UnauthorizedException('Invalid or expired verification code');
+      }
     }
 
     const updatedUser = await this.usersService.markEmailVerified(user.id);
+    await this.rateLimits.reset(RATE_LIMITS.otpVerifyUser, user.id);
     await this.sessionsService.createSession(updatedUser, res);
 
     return { redirectTo: '/onboarding' };
   }
 
-  async resendVerification(user: AuthUser) {
+  async resendVerification(user: AuthUser, ip: string) {
     if (user.emailVerifiedAt) {
       return { ok: true };
     }
@@ -125,19 +155,31 @@ export class AuthService {
       );
     }
 
+    await this.rateLimits.consume(RATE_LIMITS.otpSendIp, ip);
+    await this.rateLimits.consume(RATE_LIMITS.otpSendUser, user.id);
+
     const otp = generateOtp();
     await this.usersService.setEmailVerificationOtp(user.id, otp);
+    await this.rateLimits.reset(RATE_LIMITS.otpVerifyUser, user.id);
     await this.mailService.sendVerificationOtp(
       user.email,
       user.name,
       otp,
-      `verification:${user.id}:${hashOtp(otp)}`,
+      verificationIdempotencyKey(user.id),
     );
     return { ok: true };
   }
 
-  async forgotPassword(email: string) {
-    const user = await this.usersService.findByEmailForPasswordReset(email);
+  async forgotPassword(email: string, ip: string) {
+    await this.rateLimits.consume(RATE_LIMITS.resetRequestIp, ip);
+    const perAccount = await this.rateLimits.hit(
+      RATE_LIMITS.resetRequestAccount,
+      email,
+    );
+    const user =
+      perAccount.count > RATE_LIMITS.resetRequestAccount.limit
+        ? null
+        : await this.usersService.findByEmailForPasswordReset(email);
 
     if (user) {
       const token = generatePasswordResetToken();
@@ -156,7 +198,8 @@ export class AuthService {
     };
   }
 
-  async resetPassword(token: string, password: string) {
+  async resetPassword(token: string, password: string, ip: string) {
+    await this.rateLimits.consume(RATE_LIMITS.resetSubmitIp, ip);
     const user = await this.usersService.findByPasswordResetToken(token);
 
     if (!user) {

@@ -4,10 +4,22 @@ import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { loginSchema } from '@/lib/validations/auth';
 import { apiFetch } from '@/lib/api/client';
-import { AuthError, AuthLayout, AuthLink } from '@/components/auth/AuthLayout';
-import { FormField } from '@/components/auth/FormField';
-import { Button } from '@/components/ui/button';
+import { AuthSplitLayout } from '@/components/auth/AuthShell';
+import {
+  AuthButton,
+  AuthFooter,
+  AuthHeading,
+  AuthInput,
+  AuthNotice,
+  AuthTextLink,
+  Emoji,
+  PasswordInput,
+} from '@/components/auth/AuthControls';
+import { SuccessScreen } from '@/components/auth/TransitionScreen';
 import { getSafeInternalReturnPath } from '@/lib/auth/return-path';
+import { collectFieldErrors, firstName } from '@/lib/auth/form';
+
+const WELCOME_SCREEN_MS = 1400;
 
 function LoginForm() {
   const router = useRouter();
@@ -17,6 +29,7 @@ function LoginForm() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [welcomeName, setWelcomeName] = useState<string | null>(null);
   const passwordChanged = searchParams.get('passwordChanged') === '1';
   const returnPath = getSafeInternalReturnPath(searchParams.get('from'));
   const signupParams = new URLSearchParams();
@@ -28,85 +41,102 @@ function LoginForm() {
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (loading) return;
     setFormError('');
     setFieldErrors({});
 
     const parsed = loginSchema.safeParse({ email, password });
     if (!parsed.success) {
-      const errors: Record<string, string> = {};
-      for (const issue of parsed.error.issues) {
-        const key = issue.path[0];
-        if (typeof key === 'string') {
-          errors[key] = issue.message;
-        }
-      }
-      setFieldErrors(errors);
+      setFieldErrors(collectFieldErrors(parsed.error));
       return;
     }
 
     setLoading(true);
-    const result = await apiFetch<{ redirectTo?: string }>('/auth/login', {
+    const result = await apiFetch<{
+      redirectTo?: string;
+      user?: { name: string };
+    }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(parsed.data),
     });
-    setLoading(false);
 
     if (!result.ok) {
-      setFormError(result.error);
+      setLoading(false);
+      if (result.status === 401) {
+        setFieldErrors({ password: 'Incorrect email or password' });
+      } else {
+        setFormError(result.error);
+      }
       return;
     }
 
-    router.push(returnPath ?? result.data.redirectTo ?? '/dashboard');
+    const destination = returnPath ?? result.data.redirectTo ?? '/dashboard';
+    if (destination.startsWith('/dashboard')) {
+      setWelcomeName(firstName(result.data.user?.name));
+      await new Promise((resolve) => setTimeout(resolve, WELCOME_SCREEN_MS));
+    }
+    router.push(destination);
     router.refresh();
   }
 
+  if (welcomeName !== null) {
+    return (
+      <SuccessScreen>
+        Success <Emoji>🥳</Emoji> Welcome Back {welcomeName}....
+      </SuccessScreen>
+    );
+  }
+
   return (
-    <AuthLayout
-      title="Welcome back"
-      subtitle="Sign in to your Contexual workspace"
-      footer={
-        <p>
-          Don&apos;t have an account?{' '}
-          <AuthLink href={signupHref}>Sign up</AuthLink>
-        </p>
-      }
-    >
-      <form onSubmit={handleSubmit} className="space-y-5">
-        <AuthError>{formError}</AuthError>
-        {passwordChanged ? (
-          <p className="rounded-lg border border-border bg-accent px-3 py-2 text-sm text-accent-foreground">
-            Password changed. Sign in again with your new password.
-          </p>
-        ) : null}
-
-        <FormField
-          label="Email"
-          name="email"
-          type="email"
-          autoComplete="email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          error={fieldErrors.email}
+    <AuthSplitLayout image="signin">
+      <div className="flex flex-col gap-[68px]">
+        <AuthHeading
+          title="Sign In to Your Account"
+          subtitle="Please write all the required sign in details required"
         />
 
-        <FormField
-          label="Password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          error={fieldErrors.password}
-          labelAction={
-            <AuthLink href="/forgot-password">Forgot password?</AuthLink>
-          }
-        />
+        <div className="flex flex-col gap-[37px]">
+          <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-[39px]">
+            <div className="flex flex-col gap-[22px]">
+              {passwordChanged ? (
+                <AuthNotice>Password changed. Sign in again with your new password.</AuthNotice>
+              ) : null}
+              <AuthNotice tone="error">{formError}</AuthNotice>
+              <AuthInput
+                label="Email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                placeholder="Please enter your email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                error={fieldErrors.email}
+              />
+              <PasswordInput
+                label="Password"
+                name="password"
+                autoComplete="current-password"
+                placeholder="Please enter your Password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                error={fieldErrors.password}
+              />
+              <AuthTextLink
+                href="/forgot-password"
+                className="self-start text-[16px] text-sub underline decoration-from-font hover:text-soft"
+              >
+                Forgot Password
+              </AuthTextLink>
+            </div>
+            <AuthButton disabled={loading}>{loading ? 'Signing In…' : 'Sign In'}</AuthButton>
+          </form>
 
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? 'Signing in…' : 'Sign in'}
-        </Button>
-      </form>
-    </AuthLayout>
+          <AuthFooter>
+            Don&apos;t have an account? <AuthTextLink href={signupHref}>Sign Up</AuthTextLink>
+          </AuthFooter>
+        </div>
+      </div>
+    </AuthSplitLayout>
   );
 }
 

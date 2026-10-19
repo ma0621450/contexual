@@ -8,13 +8,14 @@ const validProductionEnv: NodeJS.ProcessEnv = {
     '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
   WEB_URL: 'https://app.example.com',
   RESEND_API_KEY: 're_example',
-  EMAIL_FROM: 'Contexual <mail@example.com>',
+  EMAIL_FROM: 'PromplexAI <mail@example.com>',
   S3_BUCKET: 'contexual-production',
   S3_REGION: 'us-east-1',
   FILE_SCANNING_REQUIRED: 'true',
   CLAMAV_HOST: 'clamav',
   CLAMAV_PORT: '3310',
   CLAMAV_TIMEOUT_MS: '30000',
+  TRUST_PROXY_HOPS: '1',
 };
 
 describe('validateRuntimeConfig', () => {
@@ -43,4 +44,16 @@ describe('validateRuntimeConfig', () => {
     expect(message).toContain('S3_BUCKET');
     expect(message).toContain('FILE_SCANNING_REQUIRED');
   });
+
+  it.each([undefined, '0', '6', 'all', '1.5'])(
+    'requires an explicit edge proxy count in production (%s)',
+    (value) => {
+      expect(() =>
+        validateRuntimeConfig({
+          ...validProductionEnv,
+          TRUST_PROXY_HOPS: value,
+        }),
+      ).toThrow('TRUST_PROXY_HOPS');
+    },
+  );
 });

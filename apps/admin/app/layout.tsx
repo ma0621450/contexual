@@ -8,7 +8,7 @@ export const metadata: Metadata = {
     default: 'Platform Admin',
     template: '%s · Platform Admin',
   },
-  description: 'Internal platform administration for Contexual.',
+  description: 'Internal platform administration for PromplexAI.',
   robots: { index: false, follow: false },
 };
 

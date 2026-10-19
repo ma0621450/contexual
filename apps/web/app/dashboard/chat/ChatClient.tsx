@@ -1141,7 +1141,7 @@ export function ChatClient({
                   }
                 }}
                 rows={1}
-                placeholder="Message Contexual…"
+                placeholder="Message Promplex…"
                 aria-label="Message"
                 className="max-h-50 min-h-11 resize-none rounded-none border-0 bg-transparent px-4 py-3 shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
                 disabled={sending || !providerConnected}

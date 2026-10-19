@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EncryptionService } from '../common/crypto/encryption.service';
 import { PrismaService } from '../database/prisma.service';
+import { sealEmailContent } from './email-content';
 
 type SendMailParams = {
   to: string;
@@ -17,6 +19,7 @@ export class MailService {
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly encryption: EncryptionService,
   ) {}
 
   isConfigured(): boolean {
@@ -35,7 +38,7 @@ export class MailService {
     await this.send({
       to,
       idempotencyKey,
-      subject: 'Verify your Contexual email',
+      subject: 'Verify your Promplex email',
       text: `Hi ${name},\n\nYour verification code is ${otp}. It expires in 15 minutes.\n`,
       html: `<p>Hi ${this.escapeHtml(name)},</p><p>Your verification code is <strong>${otp}</strong>.</p><p>It expires in 15 minutes.</p>`,
     });
@@ -51,9 +54,9 @@ export class MailService {
     await this.send({
       to: params.to,
       idempotencyKey: params.idempotencyKey,
-      subject: `Join ${params.organizationName} on Contexual`,
-      text: `${params.inviterName} invited you to join ${params.organizationName} on Contexual.\n\nAccept the invite: ${params.inviteUrl}\n`,
-      html: `<p>${this.escapeHtml(params.inviterName)} invited you to join <strong>${this.escapeHtml(params.organizationName)}</strong> on Contexual.</p><p><a href="${params.inviteUrl}">Accept invitation</a></p>`,
+      subject: `Join ${params.organizationName} on Promplex`,
+      text: `${params.inviterName} invited you to join ${params.organizationName} on Promplex.\n\nAccept the invite: ${params.inviteUrl}\n`,
+      html: `<p>${this.escapeHtml(params.inviterName)} invited you to join <strong>${this.escapeHtml(params.organizationName)}</strong> on Promplex.</p><p><a href="${params.inviteUrl}">Accept invitation</a></p>`,
     });
   }
 
@@ -66,7 +69,7 @@ export class MailService {
     await this.send({
       to: params.to,
       idempotencyKey: params.idempotencyKey,
-      subject: 'Reset your Contexual password',
+      subject: 'Reset your Promplex password',
       text: `Hi ${params.name},\n\nReset your password: ${params.resetUrl}\n\nThis link expires in 1 hour.\n`,
       html: `<p>Hi ${this.escapeHtml(params.name)},</p><p><a href="${params.resetUrl}">Reset your password</a></p><p>This link expires in 1 hour.</p>`,
     });
@@ -88,8 +91,8 @@ export class MailService {
         idempotencyKey: params.idempotencyKey,
         to: params.to,
         subject: params.subject,
-        html: params.html,
-        text: params.text,
+        html: sealEmailContent(this.encryption, params.html),
+        text: sealEmailContent(this.encryption, params.text),
         maxAttempts: Number(this.config.get<string>('EMAIL_MAX_ATTEMPTS') || 5),
       },
     });

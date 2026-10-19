@@ -73,6 +73,21 @@ enum FileProcessingJobStatus {
   FAILED
 }
 
+enum OrganizationType {
+  DESIGN_AGENCY
+  CREATIVE_STUDIO
+  BRAND_CONSULTANCY
+  UX_RESEARCH_FIRM
+}
+
+enum TeamSize {
+  JUST_ME
+  SIZE_2_10
+  SIZE_11_25
+  SIZE_26_100
+  SIZE_100_PLUS
+}
+
 enum EmailOutboxStatus {
   PENDING
   PROCESSING
@@ -117,7 +132,10 @@ model User {
 model Organization {
   id   String @id @default(cuid())
   name String
+  /// Workspace URL identifier.
   slug String @unique
+  organizationType OrganizationType?
+  teamSize         TeamSize?
 
   planTier  PlanTier @default(FREE)
   maxMembers Int     @default(3)
@@ -210,6 +228,8 @@ model Invite {
   role           MembershipRole @default(MEMBER)
   status         InviteStatus @default(PENDING)
   token          String       @unique
+  /// SHA-256 of a secret delivered only inside the invitation email; proves inbox control.
+  emailProofHash String?
 
   invitedById String
   invitedBy   User   @relation("InviteSender", fields: [invitedById], references: [id], onDelete: Cascade)
@@ -533,9 +553,20 @@ model EmailOutbox {
   providerId     String?
   lastError      String?
   sentAt         DateTime?
+  /// Set once html/text are cleared after delivery finishes; bodies carry one-time secrets.
+  contentRedactedAt DateTime?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
   @@index([status, runAfter])
   @@index([lockedAt])
+}
+
+/// Fixed-window counters shared by every API instance. Keys hold hashed subjects only.
+model RateLimitBucket {
+  key     String   @id
+  count   Int
+  resetAt DateTime
+
+  @@index([resetAt])
 }

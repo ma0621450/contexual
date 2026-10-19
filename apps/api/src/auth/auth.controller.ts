@@ -24,6 +24,7 @@ import {
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { REFRESH_TOKEN_COOKIE } from './auth.types';
+import { clientIp } from '../config/trust-proxy';
 import type { AuthUser } from './auth.types';
 
 @Controller('auth')
@@ -38,9 +39,16 @@ export class AuthController {
   @Post('register')
   async register(
     @Body() dto: RegisterDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.register(dto.name, dto.email, dto.password, res);
+    return this.authService.register(
+      dto.name,
+      dto.email,
+      dto.password,
+      res,
+      clientIp(req),
+    );
   }
 
   @Post('login')
@@ -61,16 +69,17 @@ export class AuthController {
   async verifyEmail(
     @Body() dto: VerifyEmailDto,
     @CurrentUser() user: AuthUser,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.verifyEmail(user, dto.otp, res);
+    return this.authService.verifyEmail(user, dto.otp, res, clientIp(req));
   }
 
   @Post('resend-verification')
   @UseGuards(JwtAuthGuard)
   @HttpCode(200)
-  resendVerification(@CurrentUser() user: AuthUser) {
-    return this.authService.resendVerification(user);
+  resendVerification(@CurrentUser() user: AuthUser, @Req() req: Request) {
+    return this.authService.resendVerification(user, clientIp(req));
   }
 
   @Post('refresh')
@@ -118,13 +127,17 @@ export class AuthController {
 
   @Post('forgot-password')
   @HttpCode(200)
-  forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.authService.forgotPassword(dto.email);
+  forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
+    return this.authService.forgotPassword(dto.email, clientIp(req));
   }
 
   @Post('reset-password')
   @HttpCode(200)
-  resetPassword(@Body() dto: ResetPasswordDto) {
-    return this.authService.resetPassword(dto.token, dto.password);
+  resetPassword(@Body() dto: ResetPasswordDto, @Req() req: Request) {
+    return this.authService.resetPassword(
+      dto.token,
+      dto.password,
+      clientIp(req),
+    );
   }
 }

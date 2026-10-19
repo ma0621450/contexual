@@ -3,24 +3,33 @@
 import { useState } from 'react';
 import { forgotPasswordSchema } from '@/lib/validations/auth';
 import { apiFetch } from '@/lib/api/client';
-import { AuthLayout, AuthLink } from '@/components/auth/AuthLayout';
-import { FormField } from '@/components/auth/FormField';
-import { Button } from '@/components/ui/button';
+import { AuthSplitLayout } from '@/components/auth/AuthShell';
+import {
+  AuthButton,
+  AuthFooter,
+  AuthHeading,
+  AuthInput,
+  AuthNotice,
+  AuthTextLink,
+  Emoji,
+} from '@/components/auth/AuthControls';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [message, setMessage] = useState('');
+  const [fieldError, setFieldError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [sentTo, setSentTo] = useState('');
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    setMessage('');
-    setFieldErrors({});
+    if (loading) return;
+    setFieldError('');
+    setFormError('');
 
     const parsed = forgotPasswordSchema.safeParse({ email });
     if (!parsed.success) {
-      setFieldErrors({ email: parsed.error.issues[0]?.message ?? 'Invalid email' });
+      setFieldError(parsed.error.issues[0]?.message ?? 'Enter a valid email address');
       return;
     }
 
@@ -32,47 +41,73 @@ export default function ForgotPasswordPage() {
     setLoading(false);
 
     if (!result.ok) {
-      setMessage(result.error);
+      setFormError(result.error);
       return;
     }
+    setSentTo(parsed.data.email);
+  }
 
-    setMessage(
-      result.data.message ??
-        'If an account exists for this email, a reset link will be sent.',
+  if (sentTo) {
+    return (
+      <AuthSplitLayout image="signin">
+        <div className="flex flex-col gap-[68px]">
+          <AuthHeading
+            title={
+              <>
+                Check Your Inbox <Emoji>📬</Emoji>
+              </>
+            }
+            subtitle={
+              <>
+                If an account exists for <span className="text-soft">{sentTo}</span>, we sent a
+                link to reset your password. It expires in 1 hour.
+              </>
+            }
+          />
+          <div className="flex flex-col gap-[37px]">
+            <AuthButton type="button" onClick={() => setSentTo('')}>
+              Use a Different Email
+            </AuthButton>
+            <AuthFooter>
+              Remember your password? <AuthTextLink href="/login">Sign In</AuthTextLink>
+            </AuthFooter>
+          </div>
+        </div>
+      </AuthSplitLayout>
     );
   }
 
   return (
-    <AuthLayout
-      title="Reset your password"
-      subtitle="We'll send you a link to reset your password"
-      footer={
-        <p>
-          Remember your password? <AuthLink href="/login">Sign in</AuthLink>
-        </p>
-      }
-    >
-      <form onSubmit={handleSubmit} className="space-y-5">
-        {message ? (
-          <p className="rounded-lg border border-border bg-accent px-3 py-2 text-sm text-accent-foreground">
-            {message}
-          </p>
-        ) : null}
-
-        <FormField
-          label="Email"
-          name="email"
-          type="email"
-          autoComplete="email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          error={fieldErrors.email}
+    <AuthSplitLayout image="signin">
+      <div className="flex flex-col gap-[68px]">
+        <AuthHeading
+          title="Forgot Your Password?"
+          subtitle="Enter your email and we will send you a reset link"
         />
-
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? 'Sending…' : 'Send reset link'}
-        </Button>
-      </form>
-    </AuthLayout>
+        <div className="flex flex-col gap-[37px]">
+          <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-[39px]">
+            <div className="flex flex-col gap-[22px]">
+              <AuthNotice tone="error">{formError}</AuthNotice>
+              <AuthInput
+                label="Email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                placeholder="Please enter your email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                error={fieldError}
+              />
+            </div>
+            <AuthButton disabled={loading}>
+              {loading ? 'Sending…' : 'Send Reset Link'}
+            </AuthButton>
+          </form>
+          <AuthFooter>
+            Remember your password? <AuthTextLink href="/login">Sign In</AuthTextLink>
+          </AuthFooter>
+        </div>
+      </div>
+    </AuthSplitLayout>
   );
 }

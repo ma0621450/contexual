@@ -1,3 +1,5 @@
+import { MAX_TRUST_PROXY_HOPS } from './trust-proxy';
+
 const DEFAULT_JWT_SECRETS = new Set([
   'dev-jwt-secret-change-in-production',
   'change-me',
@@ -73,6 +75,15 @@ export function validateRuntimeConfig(
     ['127.0.0.1', 'localhost', '::1'].includes(clamAvHost.toLowerCase())
   ) {
     errors.push('CLAMAV_HOST must reference the production ClamAV service');
+  }
+  const trustProxyHops = required('TRUST_PROXY_HOPS');
+  if (trustProxyHops) {
+    const hops = Number(trustProxyHops);
+    if (!Number.isInteger(hops) || hops < 1 || hops > MAX_TRUST_PROXY_HOPS) {
+      errors.push(
+        `TRUST_PROXY_HOPS must be the number of edge proxies in front of the web app (1-${MAX_TRUST_PROXY_HOPS})`,
+      );
+    }
   }
   validatePort('CLAMAV_PORT', env.CLAMAV_PORT, errors);
   validatePositiveInteger('CLAMAV_TIMEOUT_MS', env.CLAMAV_TIMEOUT_MS, errors);

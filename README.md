@@ -1,6 +1,6 @@
-# Contexual
+# PromplexAI
 
-Contexual is a team AI workspace in an npm/Turborepo monorepo:
+PromplexAI is a team AI workspace in an npm/Turborepo monorepo:
 
 - `apps/web` — Next.js web client (port 3000)
 - `apps/api` — NestJS API (port 3001)

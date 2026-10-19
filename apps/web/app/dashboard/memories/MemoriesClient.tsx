@@ -112,7 +112,7 @@ export function MemoriesClient({ initialMemories, isAdmin }: Props) {
       <section>
         <h2 className="text-xl font-semibold tracking-tight">Memories</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Review exactly what Contexual can include in future chats.
+          Review exactly what Promplex can include in future chats.
         </p>
 
         <Card className="mt-6">

@@ -1,62 +1,58 @@
 'use client';
 
-import { Suspense, useRef, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { verifyEmailSchema } from '@/lib/validations/auth';
 import { DEV_OTP_HINT } from '@/lib/auth/dev-hint';
 import { apiFetch } from '@/lib/api/client';
-import { AuthError, AuthLayout } from '@/components/auth/AuthLayout';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { AuthCenteredLayout } from '@/components/auth/AuthShell';
+import {
+  AuthButton,
+  AuthFooter,
+  AuthHeading,
+  AuthNotice,
+  AuthTextButton,
+  Emoji,
+} from '@/components/auth/AuthControls';
+import { OtpInput } from '@/components/auth/OtpInput';
 import { getSafeInternalReturnPath } from '@/lib/auth/return-path';
+
+const RESEND_COOLDOWN_SECONDS = 60;
+const EMPTY_CODE = ['', '', '', ''];
 
 function VerifyEmailForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const returnPath = getSafeInternalReturnPath(searchParams.get('from'));
-  const [digits, setDigits] = useState(['', '', '', '']);
+  const [digits, setDigits] = useState(EMPTY_CODE);
+  const [email, setEmail] = useState('');
   const [error, setError] = useState('');
+  const [resendError, setResendError] = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
-  const inputsRef = useRef<Array<HTMLInputElement | null>>([]);
+  const [resending, setResending] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
 
-  function updateDigit(index: number, value: string) {
-    const next = value.replace(/\D/g, '').slice(-1);
-    const updated = [...digits];
-    updated[index] = next;
-    setDigits(updated);
+  useEffect(() => {
+    void apiFetch<{ email: string }>('/auth/me').then((result) => {
+      if (result.ok) setEmail(result.data.email);
+    });
+  }, []);
 
-    if (next && index < 3) {
-      inputsRef.current[index + 1]?.focus();
-    }
-  }
-
-  function handleKeyDown(
-    index: number,
-    event: React.KeyboardEvent<HTMLInputElement>,
-  ) {
-    if (event.key === 'Backspace' && !digits[index] && index > 0) {
-      inputsRef.current[index - 1]?.focus();
-    }
-  }
-
-  function handlePaste(event: React.ClipboardEvent<HTMLInputElement>) {
-    event.preventDefault();
-    const pasted = event.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4);
-    if (!pasted) return;
-
-    const updated = pasted.split('').concat(Array(4).fill('')).slice(0, 4);
-    setDigits(updated);
-    inputsRef.current[Math.min(pasted.length, 3)]?.focus();
-  }
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((value) => value - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (loading) return;
     setError('');
+    setResendError('');
+    setNotice('');
 
-    const otp = digits.join('');
-    const parsed = verifyEmailSchema.safeParse({ otp });
-
+    const parsed = verifyEmailSchema.safeParse({ otp: digits.join('') });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? 'Invalid code');
       return;
@@ -67,10 +63,11 @@ function VerifyEmailForm() {
       method: 'POST',
       body: JSON.stringify(parsed.data),
     });
-    setLoading(false);
 
     if (!result.ok) {
+      setLoading(false);
       setError(result.error);
+      setDigits(EMPTY_CODE);
       return;
     }
 
@@ -79,79 +76,84 @@ function VerifyEmailForm() {
   }
 
   async function resendCode() {
-    if (loading) return;
-    setLoading(true);
+    if (resending || cooldown > 0) return;
+    setResending(true);
     setError('');
+    setResendError('');
     setNotice('');
     const result = await apiFetch<{ ok: true }>('/auth/resend-verification', {
       method: 'POST',
     });
-    setLoading(false);
+    setResending(false);
     if (result.ok) {
-      setNotice('A new verification code was sent.');
+      setNotice('A new code is on its way to your inbox.');
+      setCooldown(RESEND_COOLDOWN_SECONDS);
+    } else if (result.status === 400 && /wait/i.test(result.error)) {
+      setNotice('We just sent you a code. You can request another one shortly.');
+      setCooldown(RESEND_COOLDOWN_SECONDS);
     } else {
-      setError(result.error);
+      setResendError(result.error);
     }
   }
 
   return (
-    <AuthLayout
-      title="Verify your email"
-      subtitle="We sent a verification code to your email address"
-    >
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {DEV_OTP_HINT ? (
-          <p className="text-center text-sm text-muted-foreground">
-            {DEV_OTP_HINT}
-          </p>
-        ) : null}
+    <AuthCenteredLayout>
+      <div className="flex flex-col items-center gap-[68px]">
+        <AuthHeading
+          align="center"
+          title={
+            <>
+              We Sent You a Code <Emoji>✋</Emoji>
+            </>
+          }
+          subtitle={
+            <>
+              we sent you a code on{' '}
+              <span className="break-all text-soft sm:break-normal sm:whitespace-nowrap">
+                {email || 'your email'}
+              </span>
+            </>
+          }
+        />
 
-        <AuthError>{error}</AuthError>
-        {notice ? (
-          <p className="rounded-lg border border-border bg-accent px-3 py-2 text-sm text-accent-foreground">
-            {notice}
-          </p>
-        ) : null}
-
-        <div className="flex justify-center gap-3">
-          {digits.map((digit, index) => (
-            <input
-              key={index}
-              ref={(element) => {
-                inputsRef.current[index] = element;
-              }}
-              type="text"
-              inputMode="numeric"
-              maxLength={1}
-              value={digit}
-              onChange={(event) => updateDigit(index, event.target.value)}
-              onKeyDown={(event) => handleKeyDown(index, event)}
-              onPaste={handlePaste}
-              className={cn(
-                'size-12 rounded-lg border bg-transparent text-center text-lg font-semibold outline-none transition-colors focus:ring-2',
-                error
-                  ? 'border-destructive focus:border-destructive focus:ring-destructive/20'
-                  : 'border-input focus:border-ring focus:ring-ring/25',
-              )}
-              aria-label={`Digit ${index + 1}`}
-            />
-          ))}
-        </div>
-
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? 'Verifying…' : 'Verify email'}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          className="w-full"
-          onClick={resendCode}
-          disabled={loading}
+        <form
+          onSubmit={handleSubmit}
+          noValidate
+          className="flex w-full flex-col items-center gap-[37px]"
         >
-          Resend code
-        </Button>
-      </form>
-    </AuthLayout>
+          <OtpInput
+            value={digits}
+            onChange={(next) => {
+              setDigits(next);
+              setError('');
+            }}
+            invalid={Boolean(error)}
+            disabled={loading}
+          />
+          {error || resendError || notice ? (
+            <div className="-my-[16px] w-full">
+              <AuthNotice tone={error || resendError ? 'error' : 'info'}>
+                {error || resendError || notice}
+              </AuthNotice>
+            </div>
+          ) : null}
+          <AuthButton disabled={loading} className="w-[251px]">
+            {loading ? 'Verifying…' : 'Login'}
+          </AuthButton>
+          <AuthFooter align="center">
+            Didn&apos;t receive the Code yet ?{' '}
+            <AuthTextButton onClick={resendCode} disabled={resending || cooldown > 0}>
+              {cooldown > 0 ? `Resend Code in ${cooldown}s` : 'Resend Code'}
+            </AuthTextButton>
+          </AuthFooter>
+          {process.env.NODE_ENV !== 'production' ? (
+            <p className="-mt-[16px] max-w-[438px] text-center text-[13px] text-sub">
+              {DEV_OTP_HINT}
+            </p>
+          ) : null}
+        </form>
+      </div>
+    </AuthCenteredLayout>
   );
 }
 

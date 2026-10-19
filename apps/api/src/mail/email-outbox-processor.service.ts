@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EmailOutboxStatus } from '@contexual/database';
+import { EncryptionService } from '../common/crypto/encryption.service';
 import { PrismaService } from '../database/prisma.service';
+import { openEmailContent, REDACTED_EMAIL_CONTENT } from './email-content';
 import {
   EmailDeliveryService,
   MailDeliveryError,
@@ -25,11 +27,13 @@ export class EmailOutboxProcessorService {
   private readonly pollIntervalMs: number;
   private readonly staleLockMs: number;
   private stopping = false;
+  private lastRedactionAt = 0;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly delivery: EmailDeliveryService,
     config: ConfigService,
+    private readonly encryption: EncryptionService,
   ) {
     this.pollIntervalMs = Number(
       config.get<string>('EMAIL_WORKER_POLL_MS') || 1_000,
@@ -46,6 +50,7 @@ export class EmailOutboxProcessorService {
   async run(): Promise<void> {
     this.logger.log(`Email outbox processor ${this.workerId} started`);
     while (!this.stopping) {
+      await this.redactFinishedEmailsPeriodically();
       const processed = await this.processNext().catch((error: unknown) => {
         this.logger.error(
           'Unexpected email outbox loop failure',
@@ -62,7 +67,7 @@ export class EmailOutboxProcessorService {
     if (!email) return false;
 
     try {
-      const providerId = await this.delivery.deliver(email);
+      const providerId = await this.delivery.deliver(this.open(email));
       await this.prisma.emailOutbox.updateMany({
         where: { id: email.id, lockedBy: this.workerId },
         data: {
@@ -72,6 +77,7 @@ export class EmailOutboxProcessorService {
           lockedAt: null,
           lockedBy: null,
           lastError: null,
+          ...redactedContent(),
         },
       });
     } catch (error) {
@@ -93,10 +99,48 @@ export class EmailOutboxProcessorService {
           lockedAt: null,
           lockedBy: null,
           lastError: normalized.message,
+          ...(retryable ? {} : redactedContent()),
         },
       });
     }
     return true;
+  }
+
+  /** Clears bodies of finished emails, including rows written before redaction shipped. */
+  async redactFinishedEmails(): Promise<number> {
+    const result = await this.prisma.emailOutbox.updateMany({
+      where: {
+        status: { in: [EmailOutboxStatus.SENT, EmailOutboxStatus.FAILED] },
+        contentRedactedAt: null,
+      },
+      data: redactedContent(),
+    });
+    return result.count;
+  }
+
+  private async redactFinishedEmailsPeriodically() {
+    if (Date.now() - this.lastRedactionAt < REDACTION_INTERVAL_MS) return;
+    this.lastRedactionAt = Date.now();
+    await this.redactFinishedEmails().catch((error: unknown) => {
+      this.logger.warn(
+        `Email content redaction failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }
+
+  private open(email: ClaimedEmail): ClaimedEmail {
+    try {
+      return {
+        ...email,
+        html: openEmailContent(this.encryption, email.html),
+        text: openEmailContent(this.encryption, email.text),
+      };
+    } catch {
+      throw new MailDeliveryError(
+        'Email content could not be decrypted',
+        false,
+      );
+    }
   }
 
   async claimNext(): Promise<ClaimedEmail | null> {
@@ -140,6 +184,16 @@ export class EmailOutboxProcessorService {
     });
     return rows[0] ?? null;
   }
+}
+
+const REDACTION_INTERVAL_MS = 60 * 60_000;
+
+function redactedContent() {
+  return {
+    html: REDACTED_EMAIL_CONTENT,
+    text: REDACTED_EMAIL_CONTENT,
+    contentRedactedAt: new Date(),
+  };
 }
 
 export function emailRetryBackoffMs(

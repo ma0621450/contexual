@@ -7,7 +7,7 @@ describe('EmailDeliveryService', () => {
   const config = {
     get: jest.fn((key: string) => (key === 'EMAIL_TIMEOUT_MS' ? '1000' : null)),
     getOrThrow: jest.fn((key: string) =>
-      key === 'RESEND_API_KEY' ? 're_test' : 'Contexual <mail@example.com>',
+      key === 'RESEND_API_KEY' ? 're_test' : 'PromplexAI <mail@example.com>',
     ),
   };
   const service = new EmailDeliveryService(config as never);

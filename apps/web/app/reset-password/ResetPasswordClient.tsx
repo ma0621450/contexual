@@ -4,9 +4,16 @@ import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { resetPasswordSchema } from '@/lib/validations/auth';
 import { apiFetch } from '@/lib/api/client';
-import { AuthError, AuthLayout, AuthLink } from '@/components/auth/AuthLayout';
-import { FormField } from '@/components/auth/FormField';
-import { Button } from '@/components/ui/button';
+import { AuthSplitLayout } from '@/components/auth/AuthShell';
+import {
+  AuthButtonLink,
+  AuthButton,
+  AuthFooter,
+  AuthHeading,
+  AuthNotice,
+  AuthTextLink,
+  PasswordInput,
+} from '@/components/auth/AuthControls';
 
 export function ResetPasswordClient() {
   const router = useRouter();
@@ -21,19 +28,14 @@ export function ResetPasswordClient() {
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (loading) return;
     setFormError('');
     setFieldErrors({});
-
-    if (password !== confirmPassword) {
-      setFieldErrors({ confirmPassword: 'Passwords do not match' });
-      return;
-    }
 
     const parsed = resetPasswordSchema.safeParse({
       token: tokenFromUrl,
       password,
     });
-
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
       if (issue?.path[0] === 'password') {
@@ -41,6 +43,10 @@ export function ResetPasswordClient() {
       } else {
         setFormError(issue?.message ?? 'Invalid input');
       }
+      return;
+    }
+    if (password !== confirmPassword) {
+      setFieldErrors({ confirmPassword: 'Passwords do not match' });
       return;
     }
 
@@ -56,65 +62,75 @@ export function ResetPasswordClient() {
       return;
     }
 
-    router.push('/login');
+    router.push('/login?passwordChanged=1');
     router.refresh();
   }
 
   if (!tokenFromUrl) {
     return (
-      <AuthLayout
-        title="Invalid reset link"
-        subtitle="This password reset link is missing or malformed."
-        footer={
-          <p>
-            <AuthLink href="/forgot-password">Request a new link</AuthLink>
-          </p>
-        }
-      >
-        <p className="text-sm text-muted-foreground">
-          Open the link from your email, or request a new reset link.
-        </p>
-      </AuthLayout>
+      <AuthSplitLayout image="signin">
+        <div className="flex flex-col gap-[68px]">
+          <AuthHeading
+            title="This Link Isn’t Valid"
+            subtitle="The password reset link is missing or incomplete. Open the link from your email, or request a new one."
+          />
+          <div className="flex flex-col gap-[37px]">
+            <AuthButtonLink href="/forgot-password">Request a New Link</AuthButtonLink>
+            <AuthFooter>
+              Remember your password? <AuthTextLink href="/login">Sign In</AuthTextLink>
+            </AuthFooter>
+          </div>
+        </div>
+      </AuthSplitLayout>
     );
   }
 
   return (
-    <AuthLayout
-      title="Choose a new password"
-      subtitle="Enter a new password for your account"
-      footer={
-        <p>
-          Remember your password? <AuthLink href="/login">Sign in</AuthLink>
-        </p>
-      }
-    >
-      <form onSubmit={handleSubmit} className="space-y-5">
-        <AuthError>{formError}</AuthError>
-
-        <FormField
-          label="New password"
-          name="password"
-          type="password"
-          autoComplete="new-password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          error={fieldErrors.password}
+    <AuthSplitLayout image="signin">
+      <div className="flex flex-col gap-[68px]">
+        <AuthHeading
+          title="Set a New Password"
+          subtitle="Choose a new password for your account"
         />
-
-        <FormField
-          label="Confirm password"
-          name="confirmPassword"
-          type="password"
-          autoComplete="new-password"
-          value={confirmPassword}
-          onChange={(event) => setConfirmPassword(event.target.value)}
-          error={fieldErrors.confirmPassword}
-        />
-
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? 'Updating…' : 'Update password'}
-        </Button>
-      </form>
-    </AuthLayout>
+        <div className="flex flex-col gap-[37px]">
+          <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-[39px]">
+            <div className="flex flex-col gap-[22px]">
+              <AuthNotice tone="error">
+                {formError ? (
+                  <>
+                    {formError}.{' '}
+                    <AuthTextLink href="/forgot-password">Request a new link</AuthTextLink>
+                  </>
+                ) : null}
+              </AuthNotice>
+              <PasswordInput
+                label="New password"
+                name="password"
+                autoComplete="new-password"
+                placeholder="Please enter your new Password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                error={fieldErrors.password}
+              />
+              <PasswordInput
+                label="Confirm password"
+                name="confirmPassword"
+                autoComplete="new-password"
+                placeholder="Please confirm your new Password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                error={fieldErrors.confirmPassword}
+              />
+            </div>
+            <AuthButton disabled={loading}>
+              {loading ? 'Updating…' : 'Update Password'}
+            </AuthButton>
+          </form>
+          <AuthFooter>
+            Remember your password? <AuthTextLink href="/login">Sign In</AuthTextLink>
+          </AuthFooter>
+        </div>
+      </div>
+    </AuthSplitLayout>
   );
 }

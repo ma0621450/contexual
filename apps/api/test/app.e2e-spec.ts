@@ -5,6 +5,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/database/prisma.service';
+import { MailService } from './../src/mail/mail.service';
 
 type OrganizationResponse = { id: string };
 type FileResponse = {
@@ -31,6 +32,7 @@ describe('App (e2e)', () => {
       new ValidationPipe({ whitelist: true, transform: true }),
     );
     await app.init();
+    await app.get(PrismaService).$executeRaw`DELETE FROM "RateLimitBucket"`;
   });
 
   it('/api/health (GET)', () => {
@@ -205,6 +207,247 @@ describe('App (e2e)', () => {
       })
       .expect(200);
     await agent.get('/api/auth/me').expect(401);
+  });
+
+  it('creates workspaces with a custom URL and profile fields', async () => {
+    const agent = request.agent(app.getHttpServer());
+    const stamp = Date.now();
+    await agent
+      .post('/api/auth/register')
+      .send({
+        name: 'Slug User',
+        email: `slug-${stamp}@example.com`,
+        password: 'password123',
+      })
+      .expect(201);
+    await agent
+      .post('/api/auth/verify-email')
+      .send({ otp: '0000' })
+      .expect(200);
+
+    const slug = `studio-${stamp}`;
+    await agent
+      .get('/api/onboarding/slug-availability')
+      .query({ slug })
+      .expect(200, { slug, available: true });
+    const reserved = await agent
+      .get('/api/onboarding/slug-availability')
+      .query({ slug: 'dashboard' })
+      .expect(200);
+    expect(reserved.body).toMatchObject({
+      available: false,
+      reason: 'reserved',
+    });
+    const suggestion = await agent
+      .get('/api/onboarding/slug-suggestion')
+      .query({ name: 'Studio Workspace' })
+      .expect(200);
+    expect((suggestion.body as { slug: string }).slug).toMatch(
+      /^studio-workspace/,
+    );
+
+    await agent
+      .post('/api/onboarding/create-organization')
+      .send({ name: 'Studio', slug: 'Bad Slug!' })
+      .expect(400);
+    await agent
+      .post('/api/onboarding/create-organization')
+      .send({ name: 'Studio', slug, organizationType: 'NOT_A_TYPE' })
+      .expect(400);
+    await agent
+      .post('/api/onboarding/create-organization')
+      .send({
+        name: 'Studio',
+        slug,
+        organizationType: 'CREATIVE_STUDIO',
+        teamSize: 'SIZE_2_10',
+      })
+      .expect(200);
+
+    const prisma = app.get(PrismaService);
+    const organization = await prisma.organization.findUnique({
+      where: { slug },
+    });
+    expect(organization).toMatchObject({
+      organizationType: 'CREATIVE_STUDIO',
+      teamSize: 'SIZE_2_10',
+    });
+
+    await agent
+      .get('/api/onboarding/slug-availability')
+      .query({ slug })
+      .expect(200, {
+        slug,
+        available: false,
+        reason: 'taken',
+        message: 'This workspace URL is already taken',
+      });
+    await agent
+      .post('/api/onboarding/create-organization')
+      .send({ name: 'Studio Again', slug })
+      .expect(409);
+    await request(app.getHttpServer())
+      .get('/api/onboarding/slug-availability')
+      .query({ slug })
+      .expect(401);
+  });
+
+  it('signs up invitees with the emailed proof and falls back to an email code without it', async () => {
+    const mail = app.get(MailService);
+    const inviteUrls: string[] = [];
+    jest.spyOn(mail, 'sendTeamInvite').mockImplementation((params) => {
+      inviteUrls.push(params.inviteUrl);
+      return Promise.resolve();
+    });
+
+    const admin = request.agent(app.getHttpServer());
+    const stamp = Date.now();
+    await admin
+      .post('/api/auth/register')
+      .send({
+        name: 'Invite Admin',
+        email: `invite-admin-${stamp}@example.com`,
+        password: 'password123',
+      })
+      .expect(201);
+    await admin
+      .post('/api/auth/verify-email')
+      .send({ otp: '0000' })
+      .expect(200);
+    await admin
+      .post('/api/onboarding/create-organization')
+      .send({ name: 'Invite Org' })
+      .expect(200);
+
+    const provenEmail = `proven-${stamp}@example.com`;
+    const provenInvite = await admin
+      .post('/api/organizations/invites')
+      .send({ email: provenEmail, role: 'MEMBER' })
+      .expect(201);
+    const provenBody = provenInvite.body as Record<string, unknown>;
+    expect(provenBody).not.toHaveProperty('proof');
+    expect(provenBody).not.toHaveProperty('emailProofHash');
+    const emailed = new URL(inviteUrls[0] ?? '');
+    const proof = new URLSearchParams(emailed.hash.slice(1)).get('proof');
+    expect(emailed.searchParams.get('invite')).toBe(provenBody.token);
+    expect(emailed.searchParams.has('proof')).toBe(false);
+    expect(proof).toBeTruthy();
+
+    const invitee = request.agent(app.getHttpServer());
+    const preview = await invitee
+      .get('/api/onboarding/invite-preview')
+      .query({ token: provenBody.token as string })
+      .expect(200);
+    expect(preview.body).toMatchObject({
+      email: provenEmail,
+      hasAccount: false,
+    });
+
+    const joined = await invitee
+      .post('/api/onboarding/invite-signup')
+      .send({
+        token: provenBody.token,
+        proof,
+        name: 'Proven Invitee',
+        password: 'password123',
+        email: 'someone-else@example.com',
+      })
+      .expect(200);
+    expect(joined.body).toMatchObject({
+      joined: true,
+      redirectTo: '/dashboard',
+    });
+    const me = await invitee.get('/api/auth/me').expect(200);
+    expect(me.body).toMatchObject({ email: provenEmail });
+    expect(
+      (me.body as { emailVerifiedAt: string | null }).emailVerifiedAt,
+    ).toBeTruthy();
+    await invitee.get('/api/organizations/usage/me').expect(200);
+
+    await request(app.getHttpServer())
+      .post('/api/onboarding/invite-signup')
+      .send({
+        token: provenBody.token,
+        proof,
+        name: 'Replay',
+        password: 'password123',
+      })
+      .expect(409);
+
+    const prisma = app.get(PrismaService);
+    const auditEntry = await prisma.auditLog.findFirst({
+      where: {
+        action: 'invite.accepted',
+        details: { path: ['email'], equals: provenEmail },
+      },
+    });
+    expect(auditEntry).not.toBeNull();
+
+    const revoked = await admin
+      .post('/api/organizations/invites')
+      .send({ email: `revoked-${stamp}@example.com`, role: 'MEMBER' })
+      .expect(201);
+    const revokedBody = revoked.body as { id: string; token: string };
+    await admin
+      .delete(`/api/organizations/invites/${revokedBody.id}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .post('/api/onboarding/invite-signup')
+      .send({
+        token: revokedBody.token,
+        name: 'Revoked',
+        password: 'password123',
+      })
+      .expect(409);
+    await request(app.getHttpServer())
+      .post('/api/onboarding/invite-signup')
+      .send({
+        token: 'not-a-real-token',
+        name: 'Nope',
+        password: 'password123',
+      })
+      .expect(404);
+
+    const copiedEmail = `copied-${stamp}@example.com`;
+    const copiedInvite = await admin
+      .post('/api/organizations/invites')
+      .send({ email: copiedEmail, role: 'MEMBER' })
+      .expect(201);
+    const copiedToken = (copiedInvite.body as InviteResponse).token;
+
+    const linkHolder = request.agent(app.getHttpServer());
+    const fallback = await linkHolder
+      .post('/api/onboarding/invite-signup')
+      .send({
+        token: copiedToken,
+        proof: 'guessed-proof',
+        name: 'Copied Link',
+        password: 'password123',
+      })
+      .expect(200);
+    expect(fallback.body).toMatchObject({ joined: false });
+    expect((fallback.body as { redirectTo: string }).redirectTo).toContain(
+      '/verify-email',
+    );
+    const unverified = await linkHolder.get('/api/auth/me').expect(200);
+    expect(unverified.body).toMatchObject({
+      email: copiedEmail,
+      emailVerifiedAt: null,
+      memberships: [],
+    });
+    const pending = await prisma.invite.findFirst({
+      where: { token: copiedToken },
+    });
+    expect(pending?.status).toBe('PENDING');
+
+    await linkHolder
+      .post('/api/auth/verify-email')
+      .send({ otp: '0000' })
+      .expect(200);
+    await linkHolder
+      .post('/api/onboarding/join-organization')
+      .send({ token: copiedToken })
+      .expect(200);
   });
 
   afterEach(async () => {

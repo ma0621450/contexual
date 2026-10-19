@@ -21,7 +21,6 @@ import { cn } from '@/lib/utils';
 import type { OrganizationMembership } from '@/lib/api/server';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ThemeToggle } from '@/components/theme-toggle';
 import { OrganizationSwitcher } from '@/components/dashboard/OrganizationSwitcher';
 import { UserMenu } from '@/components/dashboard/UserMenu';
 
@@ -162,9 +161,9 @@ export function DashboardShell({
             className="flex items-center gap-2 font-semibold"
           >
             <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
-              C
+              P
             </span>
-            Contexual
+            Promplex
           </Link>
           <Button
             variant="ghost"
@@ -229,7 +228,6 @@ export function DashboardShell({
           </Button>
           <h1 className="text-base font-semibold">{pageTitle}</h1>
           <div className="ml-auto flex items-center gap-1.5">
-            <ThemeToggle />
             <UserMenu name={user.name} email={user.email} role={user.role} />
           </div>
         </header>

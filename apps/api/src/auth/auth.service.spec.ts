@@ -32,6 +32,7 @@ describe('AuthService account settings', () => {
     usersService as never,
     sessionsService as never,
     {} as never,
+    {} as never,
   );
 
   beforeEach(() => jest.clearAllMocks());

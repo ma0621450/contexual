@@ -16,6 +16,7 @@ import { MembersModule } from './members/members.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { PlatformModule } from './platform/platform.module';
 import { ProvidersModule } from './providers/providers.module';
+import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { ImpersonationInterceptor } from './common/interceptors/impersonation.interceptor';
 
 @Module({
@@ -26,6 +27,7 @@ import { ImpersonationInterceptor } from './common/interceptors/impersonation.in
     MemoriesModule,
     AuditModule,
     DatabaseModule,
+    RateLimitModule,
     FilesModule,
     HealthModule,
     AuthModule,

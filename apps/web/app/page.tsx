@@ -57,9 +57,9 @@ export default function HomePage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <span className="flex items-center gap-2 text-lg font-semibold">
             <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
-              C
+              P
             </span>
-            Contexual
+            PromplexAI
           </span>
           <div className="flex items-center gap-2">
             <ThemeToggle />
@@ -148,7 +148,7 @@ export default function HomePage() {
 
       <footer className="border-t border-border">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-6 py-8 text-sm text-muted-foreground sm:flex-row">
-          <span>© {new Date().getFullYear()} Contexual. All rights reserved.</span>
+          <span>© {new Date().getFullYear()} PromplexAI. All rights reserved.</span>
           <div className="flex items-center gap-4">
             <Link href="/login" className="hover:text-foreground">
               Sign in

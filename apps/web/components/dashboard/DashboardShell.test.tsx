@@ -26,9 +26,6 @@ vi.mock('@/components/dashboard/OrganizationSwitcher', () => ({
 vi.mock('@/components/dashboard/UserMenu', () => ({
   UserMenu: () => <div>User menu</div>,
 }));
-vi.mock('@/components/theme-toggle', () => ({
-  ThemeToggle: () => <button type="button">Theme</button>,
-}));
 vi.mock('@/components/ui/scroll-area', () => ({
   ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));

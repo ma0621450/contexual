@@ -12,6 +12,7 @@ import { AuditService } from '../audit/audit.service';
 import { getUtcMonthStart } from '../common/usage/usage-period';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../database/prisma.service';
+import { generateInviteEmailProof } from '../onboarding/invite-proof';
 import { getPlanLimits } from '../organizations/plan-limits';
 
 const INVITE_EXPIRY_DAYS = 7;
@@ -119,6 +120,8 @@ export class MembersService {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + INVITE_EXPIRY_DAYS);
 
+    const emailProof = generateInviteEmailProof();
+
     const invite = await this.prisma.$transaction(async (tx) => {
       await tx.organization.update({
         where: { id: organizationId },
@@ -177,6 +180,7 @@ export class MembersService {
           organizationId,
           role,
           token: randomBytes(32).toString('base64url'),
+          emailProofHash: emailProof.hash,
           invitedById,
           expiresAt,
         },
@@ -199,7 +203,8 @@ export class MembersService {
       to: normalizedEmail,
       organizationName: organization.name,
       inviterName: inviter?.name ?? 'A team admin',
-      inviteUrl: `${this.webUrl()}/onboarding?invite=${invite.token}`,
+      // The proof rides in the fragment so it never reaches servers, proxies, logs or Referer.
+      inviteUrl: `${this.webUrl()}/onboarding?${new URLSearchParams({ invite: invite.token }).toString()}#${new URLSearchParams({ proof: emailProof.proof }).toString()}`,
       idempotencyKey: `team-invite:${invite.id}`,
     });
 
