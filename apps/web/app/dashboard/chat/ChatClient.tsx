@@ -2,29 +2,60 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   ArrowDownIcon,
   CheckIcon,
-  CopyIcon,
+  DownloadIcon,
   FileIcon,
   FolderOpenIcon,
+  FolderIcon,
   HardDriveIcon,
   LoaderCircleIcon,
   MessagesSquareIcon,
   PaperclipIcon,
   PanelLeftIcon,
+  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   SearchIcon,
   SendIcon,
-  SparklesIcon,
   SquareIcon,
   Trash2Icon,
   TriangleAlertIcon,
   UploadIcon,
   XIcon,
+  GlobeIcon,
+  PinIcon,
+  ShareIcon,
+  ArchiveRestoreIcon,
+  ChevronLeftIcon,
+  SlidersHorizontalIcon,
+  Link2OffIcon,
+  MicIcon,
 } from 'lucide-react';
-import { streamChat, streamRegenerate, apiFetch } from '@/lib/api/client';
+import {
+  streamChat,
+  streamRegenerate,
+  streamEditMessage,
+  apiFetch,
+  searchConversations,
+  renameConversation,
+  deleteMessage,
+  setMessageFeedback,
+  updateConversation,
+  listChatFolders,
+  createChatFolder,
+  renameChatFolder,
+  deleteChatFolder,
+  restoreConversation,
+  shareConversation,
+  selectMessageBranch,
+  unshareConversation,
+  updateChatFolder,
+  pickCompareWinner,
+  mergeCompareResponses,
+} from '@/lib/api/client';
 import type {
   ChatMessage,
   ConversationDetail,
@@ -34,9 +65,16 @@ import type {
 } from '@/lib/api/server';
 import { waitForFileTerminal } from '@/lib/files';
 import { cn } from '@/lib/utils';
-import { CanvasModal } from '@/components/chat/CanvasPanel';
-import { MessageContent } from '@/components/chat/MessageContent';
+import { CanvasModal, CanvasSidePanel } from '@/components/chat/CanvasPanel';
+import { MessageRow } from '@/components/chat/MessageRow';
 import type { CanvasArtifact } from '@/components/chat/parseMessageContent';
+import {
+  walkToRoot,
+  siblingsOf,
+  latestDescendantId,
+  withCompareSiblings,
+  collectDescendantIds,
+} from '@/components/chat/chat-tree';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -52,6 +90,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { ChatShareDialog } from '@/components/chat/ChatShareDialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -108,6 +147,10 @@ type ChatClientProps = {
   models: ProviderModel[];
   initialFiles: StoredFile[];
   isAdmin: boolean;
+  initialConversationId?: string | null;
+  initialDetail?: ConversationDetail | null;
+  readOnly?: boolean;
+  publicView?: boolean;
 };
 
 type ChatAttachment = {
@@ -131,6 +174,10 @@ export function ChatClient({
   models,
   initialFiles,
   isAdmin,
+  initialConversationId = null,
+  initialDetail = null,
+  readOnly = false,
+  publicView = false,
 }: ChatClientProps) {
   const [conversations, setConversations] =
     useState<ConversationSummary[]>(initialConversations);
@@ -171,6 +218,19 @@ export function ChatClient({
     availableModels.find((item) => item.isDefault)?.id ??
     availableModels[0]?.id ??
     '';
+  const resolveProjectModel = (
+    project?: {
+      defaultModel?: string | null;
+    } | null,
+  ) => {
+    if (
+      project?.defaultModel &&
+      availableModels.some((item) => item.id === project.defaultModel)
+    ) {
+      return project.defaultModel;
+    }
+    return defaultNewChatModel;
+  };
   const [model, setModel] = useState<string>(defaultNewChatModel);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
@@ -192,13 +252,72 @@ export function ChatClient({
   const [messageUsage, setMessageUsage] = useState<Record<string, MessageUsage>>(
     {},
   );
+  const [sidebarSearch, setSidebarSearch] = useState('');
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [isLargeScreen, setIsLargeScreen] = useState(false);
+  const [folders, setFolders] = useState<
+    Array<{
+      id: string;
+      name: string;
+      instructions?: string | null;
+      defaultModel?: string | null;
+      fileIds?: string[];
+    }>
+  >([]);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [renamingProject, setRenamingProject] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [webSearch, setWebSearch] = useState(false);
+  const [compareModel, setCompareModel] = useState('');
+  const [instructions, setInstructions] = useState('');
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
+  const [projectInstructions, setProjectInstructions] = useState('');
+  const [projectDefaultModel, setProjectDefaultModel] = useState('');
+  const [projectFileIds, setProjectFileIds] = useState<string[]>([]);
+  const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
+  const [liveTools, setLiveTools] = useState<
+    Array<{ title: string; status: string; detail?: string }>
+  >([]);
+  const [citations, setCitations] = useState<
+    Array<{ id: string; title: string; url?: string; snippet?: string }>
+  >([]);
+  const [folderDraft, setFolderDraft] = useState('');
+  const [shareCopied, setShareCopied] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareExpiry, setShareExpiry] = useState<'1h' | '24h' | '7d' | 'never'>(
+    'never',
+  );
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<{ stop: () => void } | null>(null);
+  const router = useRouter();
+  const skipUrlResetRef = useRef(
+    Boolean(initialConversationId || initialDetail),
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sidebarSearchRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const uploading = pendingUploads.length > 0;
   const activeConversation = conversations.find((item) => item.id === activeId);
+  const activeProject = folders.find((item) => item.id === activeProjectId);
+  const conversationIsShared = Boolean(activeConversation?.isShared);
+  const searching = Boolean(sidebarSearch.trim());
+  const visibleConversations = useMemo(() => {
+    if (searching) return conversations;
+    if (activeProjectId) {
+      return conversations.filter((item) => item.folderId === activeProjectId);
+    }
+    return conversations.filter((item) => !item.folderId);
+  }, [conversations, activeProjectId, searching]);
+  const visibleMessages = useMemo(
+    () =>
+      withCompareSiblings(messages, walkToRoot(messages, activeLeafId)),
+    [messages, activeLeafId],
+  );
   const activeModelLabel =
     availableModels.find((item) => item.id === model)?.label ?? 'No model';
   const conversationFiles = useMemo(() => {
@@ -237,11 +356,96 @@ export function ChatClient({
       if (event.key === 'Escape' && abortRef.current) {
         event.preventDefault();
         abortRef.current.abort();
+        return;
+      }
+      const mod = event.metaKey || event.ctrlKey;
+      if (!mod) return;
+      if (event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        sidebarSearchRef.current?.focus();
+      }
+      if (event.key.toLowerCase() === 'n') {
+        event.preventDefault();
+        startNewChat();
+      }
+      if (event.shiftKey && event.key.toLowerCase() === 'e' && messages.length) {
+        event.preventDefault();
+        exportConversation();
       }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
+  }, [messages.length]);
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1024px)');
+    const update = () => setIsLargeScreen(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
   }, []);
+
+  useEffect(() => {
+    const query = sidebarSearch.trim();
+    const timer = window.setTimeout(async () => {
+      const result = await searchConversations(query, showArchived);
+      if (result.ok) {
+        setConversations(result.data as ConversationSummary[]);
+      }
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [sidebarSearch, showArchived]);
+
+  useEffect(() => {
+    void listChatFolders().then((result) => {
+      if (result.ok) setFolders(result.data);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (initialDetail) {
+      setActiveId(initialDetail.id);
+      setMessages(initialDetail.messages);
+      setActiveLeafId(initialDetail.activeLeafId ?? null);
+      setInstructions(initialDetail.instructions ?? '');
+      setWebSearch(Boolean(initialDetail.webSearchEnabled));
+      if (availableModels.some((item) => item.id === initialDetail.model)) {
+        setModel(initialDetail.model);
+      }
+      setConversations((prev) =>
+        prev.some((item) => item.id === initialDetail.id)
+          ? prev
+          : [
+              {
+                id: initialDetail.id,
+                title: initialDetail.title,
+                model: initialDetail.model,
+                provider: initialDetail.provider,
+                updatedAt: new Date().toISOString(),
+                isShared: Boolean(initialDetail.isShared),
+              },
+              ...prev,
+            ],
+      );
+      return;
+    }
+    if (initialConversationId) {
+      void openConversation(initialConversationId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open once from the URL
+  }, [initialConversationId, initialDetail]);
+
+  useEffect(() => {
+    if (readOnly) return;
+    if (skipUrlResetRef.current && !activeId) return;
+    if (activeId) skipUrlResetRef.current = false;
+    const desired = activeId
+      ? `/dashboard/chat/${activeId}`
+      : '/dashboard/chat';
+    if (window.location.pathname !== desired) {
+      window.history.replaceState(window.history.state, '', desired);
+    }
+  }, [activeId, readOnly]);
 
   function handleScroll() {
     const element = scrollRef.current;
@@ -275,6 +479,22 @@ export function ChatClient({
         return;
       }
       setMessages(result.data.messages);
+      setActiveLeafId(result.data.activeLeafId ?? null);
+      setInstructions(result.data.instructions ?? '');
+      setWebSearch(Boolean(result.data.webSearchEnabled));
+      setActiveProjectId(result.data.folderId ?? activeProjectId);
+      setConversations((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                title: result.data.title,
+                isShared: Boolean(result.data.isShared),
+                folderId: result.data.folderId ?? item.folderId,
+              }
+            : item,
+        ),
+      );
       if (availableModels.some((item) => item.id === result.data.model)) {
         setModel(result.data.model);
       }
@@ -286,10 +506,18 @@ export function ChatClient({
   }
 
   function startNewChat() {
+    if (readOnly) {
+      router.push('/dashboard/chat');
+      return;
+    }
     abortRef.current?.abort();
     abortRef.current = null;
     setActiveId(null);
     setMessages([]);
+    setActiveLeafId(null);
+    setInstructions('');
+    setLiveTools([]);
+    setCitations([]);
     setAttachments([]);
     setError('');
     setFailedMessage('');
@@ -297,7 +525,119 @@ export function ChatClient({
     setAtBottom(true);
     setActiveCanvas(null);
     setMessageUsage({});
-    setModel(defaultNewChatModel);
+    setModel(resolveProjectModel(activeProject));
+  }
+
+  async function pickCompare(messageId: string) {
+    const result = await pickCompareWinner(messageId);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    if (activeId) {
+      await openConversation(activeId);
+    }
+  }
+
+  async function mergeCompare(messageId: string) {
+    const result = await mergeCompareResponses(messageId);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    if (activeId) {
+      await openConversation(activeId);
+    }
+  }
+
+  function toggleDictation() {
+    const SpeechRecognitionCtor =
+      typeof window !== 'undefined'
+        ? (
+            window as Window & {
+              SpeechRecognition?: new () => {
+                lang: string;
+                interimResults: boolean;
+                continuous: boolean;
+                start: () => void;
+                stop: () => void;
+                onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
+                onend: (() => void) | null;
+                onerror: (() => void) | null;
+              };
+              webkitSpeechRecognition?: new () => {
+                lang: string;
+                interimResults: boolean;
+                continuous: boolean;
+                start: () => void;
+                stop: () => void;
+                onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
+                onend: (() => void) | null;
+                onerror: (() => void) | null;
+              };
+            }
+          ).SpeechRecognition ||
+          (
+            window as Window & {
+              webkitSpeechRecognition?: new () => {
+                lang: string;
+                interimResults: boolean;
+                continuous: boolean;
+                start: () => void;
+                stop: () => void;
+                onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
+                onend: (() => void) | null;
+                onerror: (() => void) | null;
+              };
+            }
+          ).webkitSpeechRecognition
+        : undefined;
+
+    if (!SpeechRecognitionCtor) {
+      setError('Voice input is not supported in this browser.');
+      return;
+    }
+
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+      return;
+    }
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0]?.transcript ?? '')
+        .join(' ')
+        .trim();
+      if (transcript) {
+        setInput((previous) =>
+          previous ? `${previous.trim()} ${transcript}` : transcript,
+        );
+      }
+    };
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+    recognition.onerror = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+    recognitionRef.current = recognition;
+    setListening(true);
+    recognition.start();
+  }
+
+  function openProjectSettings() {
+    if (!activeProject) return;
+    setProjectInstructions(activeProject.instructions ?? '');
+    setProjectDefaultModel(activeProject.defaultModel ?? '');
+    setProjectFileIds(activeProject.fileIds ?? []);
+    setProjectSettingsOpen(true);
   }
 
   function stopGeneration() {
@@ -371,6 +711,7 @@ export function ChatClient({
       role: 'USER',
       content: outgoingContent,
       createdAt: new Date().toISOString(),
+      parentId: activeLeafId,
       attachments: outgoingAttachments,
     };
     const streamingAssistantId = createTempId('temp-assistant');
@@ -379,9 +720,12 @@ export function ChatClient({
       role: 'ASSISTANT',
       content: '',
       createdAt: new Date().toISOString(),
+      parentId: optimisticUser.id,
+      metadata: compareModel ? { compareSlot: 0 } : undefined,
     };
 
     setMessages((prev) => [...prev, optimisticUser, streamingAssistant]);
+    setActiveLeafId(streamingAssistantId);
     setStreamingId(streamingAssistantId);
     setInput('');
     setAttachments([]);
@@ -396,10 +740,25 @@ export function ChatClient({
           content: outgoingContent,
           model: model || undefined,
           attachmentIds: outgoingAttachments.map((file) => file.id),
+          webSearch:
+            webSearch || Boolean(activeConversation?.webSearchEnabled),
+          compareModel: compareModel || undefined,
+          parentMessageId:
+            activeLeafId && !activeLeafId.startsWith('temp-')
+              ? activeLeafId
+              : undefined,
+          folderId: !activeId ? activeProjectId ?? undefined : undefined,
         },
         (event) => {
           if (event.type === 'start') {
             setActiveId(event.conversationId);
+            if (webSearch) {
+              void updateConversation(event.conversationId, {
+                webSearchEnabled: true,
+              });
+            }
+            setLiveTools([]);
+            setCitations([]);
             setConversations((prev) =>
               prev.some((item) => item.id === event.conversationId)
                 ? prev
@@ -414,27 +773,83 @@ export function ChatClient({
                         connectedProviders[0]?.provider ??
                         'OPENAI',
                       updatedAt: new Date().toISOString(),
+                      folderId: activeProjectId,
                     },
                     ...prev,
                   ],
             );
           }
 
-          if (event.type === 'token') {
-            setMessages((prev) =>
-              prev.map((message) =>
-                message.id === streamingAssistantId
-                  ? { ...message, content: message.content + event.content }
-                  : message,
+          if (event.type === 'tool') {
+            setLiveTools((prev) => {
+              const next = prev.filter((item) => item.title !== event.title);
+              next.push({
+                title: event.title,
+                status: event.status,
+                detail: event.detail,
+              });
+              return next;
+            });
+          }
+
+          if (event.type === 'citation') {
+            setCitations((prev) =>
+              prev.some((item) => item.id === event.id) ? prev : [...prev, event],
+            );
+          }
+
+          if (event.type === 'title') {
+            setConversations((prev) =>
+              prev.map((item) =>
+                item.id === event.conversationId
+                  ? { ...item, title: event.title }
+                  : item,
               ),
             );
           }
 
+          if (event.type === 'compare-start') {
+            const compareId = createTempId('temp-compare');
+            setStreamingId(compareId);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: compareId,
+                role: 'ASSISTANT',
+                content: '',
+                createdAt: new Date().toISOString(),
+                parentId: optimisticUser.id,
+                metadata: { compareSlot: 1 },
+              },
+            ]);
+          }
+
+          if (event.type === 'token') {
+            setMessages((prev) => {
+              const targetId =
+                prev.find((item) => item.id.startsWith('temp-compare'))?.id ??
+                streamingAssistantId;
+              return prev.map((message) =>
+                message.id === targetId
+                  ? { ...message, content: message.content + event.content }
+                  : message,
+              );
+            });
+          }
+
           if (event.type === 'done') {
+            setActiveLeafId(event.message.id);
             setMessages((prev) =>
-              prev.map((message) =>
-                message.id === streamingAssistantId ? event.message : message,
-              ),
+              prev.map((message) => {
+                if (event.message.metadata?.compareSlot === 1) {
+                  return message.id.startsWith('temp-compare')
+                    ? { ...event.message, parentId: message.parentId }
+                    : message;
+                }
+                return message.id === streamingAssistantId
+                  ? { ...event.message, parentId: optimisticUser.id }
+                  : message;
+              }),
             );
             setMessageUsage((prev) => ({
               ...prev,
@@ -525,27 +940,26 @@ export function ChatClient({
 
   async function regenerateAssistant(messageId: string) {
     if (sending || !activeId) return;
-    const index = messages.findIndex((message) => message.id === messageId);
-    if (index < 0 || messages[index]?.role !== 'ASSISTANT') return;
+    const target = messages.find((message) => message.id === messageId);
+    if (!target || target.role !== 'ASSISTANT') return;
 
     setError('');
     setSending(true);
     setAtBottom(true);
 
-    const streamingAssistantId = messageId;
-    setMessages((prev) =>
-      prev
-        .filter((_, messageIndex) => messageIndex <= index)
-        .map((message) =>
-          message.id === messageId ? { ...message, content: '' } : message,
-        ),
-    );
+    const streamingAssistantId = createTempId('temp-assistant');
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: streamingAssistantId,
+        role: 'ASSISTANT',
+        content: '',
+        createdAt: new Date().toISOString(),
+        parentId: target.parentId,
+      },
+    ]);
+    setActiveLeafId(streamingAssistantId);
     setStreamingId(streamingAssistantId);
-    setMessageUsage((prev) => {
-      const next = { ...prev };
-      delete next[messageId];
-      return next;
-    });
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -569,9 +983,12 @@ export function ChatClient({
           }
 
           if (event.type === 'done') {
+            setActiveLeafId(event.message.id);
             setMessages((prev) =>
               prev.map((message) =>
-                message.id === streamingAssistantId ? event.message : message,
+                message.id === streamingAssistantId
+                  ? { ...event.message, parentId: target.parentId }
+                  : message,
               ),
             );
             setMessageUsage((prev) => ({
@@ -608,6 +1025,204 @@ export function ChatClient({
       }
     } catch {
       setError('Unable to regenerate the response.');
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
+      setSending(false);
+      setStreamingId(null);
+    }
+  }
+
+  function exportConversation() {
+    if (messages.length === 0) return;
+    const title = activeConversation?.title ?? 'chat';
+    const body = visibleMessages
+      .map((message) => {
+        const label =
+          message.role === 'USER'
+            ? 'You'
+            : message.role === 'ASSISTANT'
+              ? 'Assistant'
+              : 'System';
+        return `## ${label}\n\n${message.content.trim()}\n`;
+      })
+      .join('\n');
+    const blob = new Blob([body], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${title.replace(/[^\w.-]+/g, '-').toLowerCase() || 'chat'}.md`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function saveConversationRename(id: string) {
+    const title = renameDraft.trim();
+    if (!title) {
+      setRenamingId(null);
+      return;
+    }
+    const result = await renameConversation(id, title);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setConversations((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, title: result.data.title } : item,
+      ),
+    );
+    setRenamingId(null);
+  }
+
+  async function deleteChatMessage(messageId: string) {
+    if (sending) return;
+    const index = messages.findIndex((message) => message.id === messageId);
+    if (index < 0) return;
+    if (
+      !window.confirm(
+        'Delete this message and all replies after it? This cannot be undone.',
+      )
+    ) {
+      return;
+    }
+
+    setError('');
+    const result = await deleteMessage(messageId);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+
+    const ids = new Set(collectDescendantIds(messages, messageId));
+    setMessages((prev) => prev.filter((message) => !ids.has(message.id)));
+    setMessageUsage((prev) => {
+      const next = { ...prev };
+      for (const id of ids) {
+        delete next[id];
+      }
+      return next;
+    });
+    if (activeLeafId && ids.has(activeLeafId)) {
+      const remaining = messages.filter((message) => !ids.has(message.id));
+      setActiveLeafId(remaining.at(-1)?.id ?? null);
+    }
+    if (activeCanvas) setActiveCanvas(null);
+  }
+
+  async function setFeedback(
+    messageId: string,
+    rating: 'up' | 'down' | 'none',
+  ) {
+    const result = await setMessageFeedback(messageId, rating);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === messageId
+          ? {
+              ...message,
+              metadata: {
+                ...message.metadata,
+                feedback: result.data.feedback ?? undefined,
+              },
+            }
+          : message,
+      ),
+    );
+  }
+
+  async function editUserMessage(messageId: string, content: string) {
+    if (sending || !activeId) return;
+    const target = messages.find((message) => message.id === messageId);
+    if (!target || target.role !== 'USER') return;
+
+    setError('');
+    setSending(true);
+    setAtBottom(true);
+
+    const optimisticUser: ChatMessage = {
+      id: createTempId('temp-user'),
+      role: 'USER',
+      content,
+      createdAt: new Date().toISOString(),
+      parentId: target.parentId,
+    };
+    const streamingAssistantId = createTempId('temp-assistant');
+    const streamingAssistant: ChatMessage = {
+      id: streamingAssistantId,
+      role: 'ASSISTANT',
+      content: '',
+      createdAt: new Date().toISOString(),
+      parentId: optimisticUser.id,
+    };
+    setMessages((prev) => [...prev, optimisticUser, streamingAssistant]);
+    setActiveLeafId(streamingAssistantId);
+    setStreamingId(streamingAssistantId);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const result = await streamEditMessage(
+        messageId,
+        { content, model: model || undefined },
+        (event) => {
+          if (event.type === 'token') {
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === streamingAssistantId
+                  ? { ...message, content: message.content + event.content }
+                  : message,
+              ),
+            );
+          }
+
+          if (event.type === 'done') {
+            setActiveLeafId(event.message.id);
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === streamingAssistantId
+                  ? { ...event.message, parentId: optimisticUser.id }
+                  : message,
+              ),
+            );
+            setMessageUsage((prev) => ({
+              ...prev,
+              [event.message.id]: event.usage,
+            }));
+            const nextModel = event.usage.model || model;
+            if (
+              nextModel &&
+              availableModels.some((item) => item.id === nextModel)
+            ) {
+              setModel(nextModel);
+            }
+            setConversations((prev) =>
+              prev.map((item) =>
+                item.id === event.conversationId
+                  ? {
+                      ...item,
+                      title: event.title,
+                      model: nextModel || item.model,
+                      updatedAt: new Date().toISOString(),
+                    }
+                  : item,
+              ),
+            );
+          }
+        },
+        { signal: controller.signal },
+      );
+
+      if (!result.ok && !result.aborted) {
+        setError(result.error);
+      }
+    } catch {
+      setError('Unable to edit the message.');
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null;
@@ -765,53 +1380,278 @@ export function ChatClient({
   const attachmentsFull =
     attachments.length + pendingUploads.length >= MAX_ATTACHMENTS;
 
-  const conversationList = (
-    <>
-      <div className="p-3">
-        <Button onClick={startNewChat} className="w-full justify-start gap-2">
-          <PlusIcon className="size-4" />
-          New chat
-        </Button>
-      </div>
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
-        {conversations.length === 0 ? (
-          <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-            No conversations yet.
-          </p>
+  function renderMessageRow(message: ChatMessage, index: number) {
+    const sibs = siblingsOf(messages, message);
+    return (
+      <MessageRow
+        message={message}
+        streaming={streamingId === message.id}
+        usage={messageUsage[message.id]}
+        isLastAssistant={
+          message.role === 'ASSISTANT' &&
+          visibleMessages
+            .slice(index + 1)
+            .every((item) => item.role !== 'ASSISTANT')
+        }
+        sending={sending}
+        onOpenCanvas={setActiveCanvas}
+        onContinueClarifying={
+          !sending && !readOnly
+            ? (text) => {
+                void sendMessage(text);
+              }
+            : undefined
+        }
+        onRegenerate={
+          !readOnly &&
+          !sending &&
+          activeId &&
+          !message.id.startsWith('temp-')
+            ? () => void regenerateAssistant(message.id)
+            : undefined
+        }
+        onEdit={
+          !readOnly &&
+          message.role === 'USER' &&
+          !sending &&
+          activeId &&
+          !message.id.startsWith('temp-')
+            ? (content) => void editUserMessage(message.id, content)
+            : undefined
+        }
+        onDelete={
+          !readOnly &&
+          !sending &&
+          activeId &&
+          !message.id.startsWith('temp-')
+            ? () => void deleteChatMessage(message.id)
+            : undefined
+        }
+        onFeedback={
+          !readOnly &&
+          message.role === 'ASSISTANT' &&
+          !sending &&
+          activeId &&
+          !message.id.startsWith('temp-')
+            ? (rating) => void setFeedback(message.id, rating)
+            : undefined
+        }
+        branchIndex={sibs.findIndex((item) => item.id === message.id) + 1}
+        branchCount={sibs.length}
+        onBranch={
+          sibs.length > 1
+            ? (direction) => void switchBranch(message, direction)
+            : undefined
+        }
+      />
+    );
+  }
+
+  async function moveConversation(id: string, folderId: string | null) {
+    const result = await updateConversation(id, { folderId });
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setConversations((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, folderId } : item)),
+    );
+  }
+
+  function enterProject(id: string, name?: string) {
+    setActiveProjectId(id);
+    setRenamingProject(false);
+    setRenameDraft(
+      name ?? folders.find((item) => item.id === id)?.name ?? '',
+    );
+    setSidebarSearch('');
+    const project = folders.find((item) => item.id === id);
+    if (!activeId) {
+      setModel(resolveProjectModel(project));
+    }
+  }
+
+  function leaveProject() {
+    setActiveProjectId(null);
+    setRenamingProject(false);
+  }
+
+  async function switchBranch(message: ChatMessage, direction: -1 | 1) {
+    const sibs = siblingsOf(messages, message);
+    const index = sibs.findIndex((item) => item.id === message.id);
+    const next = sibs[index + direction];
+    if (!next) return;
+    const leaf = latestDescendantId(messages, next.id);
+    setActiveLeafId(leaf);
+    if (!next.id.startsWith('temp-')) {
+      await selectMessageBranch(next.id);
+    }
+  }
+
+  function conversationRow(conversation: ConversationSummary) {
+    const projectName = folders.find(
+      (item) => item.id === conversation.folderId,
+    )?.name;
+
+    return (
+      <div
+        key={conversation.id}
+        className={cn(
+          'group flex items-center gap-1 rounded-lg pr-1 transition-colors',
+          activeId === conversation.id ? 'bg-accent' : 'hover:bg-muted/70',
+        )}
+      >
+        {renamingId === conversation.id ? (
+          <form
+            className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveConversationRename(conversation.id);
+            }}
+          >
+            <Input
+              value={renameDraft}
+              onChange={(event) => setRenameDraft(event.target.value)}
+              className="h-8 text-xs"
+              autoFocus
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  setRenamingId(null);
+                }
+              }}
+            />
+            <Button type="submit" size="icon" className="size-8 shrink-0">
+              <CheckIcon className="size-3.5" />
+            </Button>
+          </form>
         ) : (
-          conversations.map((conversation) => (
-            <div
-              key={conversation.id}
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                if (readOnly) {
+                  router.push(`/dashboard/chat/${conversation.id}`);
+                  return;
+                }
+                void openConversation(conversation.id);
+              }}
+              aria-label={conversation.title}
               className={cn(
-                'group flex items-center gap-1 rounded-lg pr-1 transition-colors',
+                'min-w-0 flex-1 rounded-lg px-3 py-2 text-left transition-colors',
                 activeId === conversation.id
-                  ? 'bg-accent'
-                  : 'hover:bg-muted/70',
+                  ? 'text-accent-foreground'
+                  : 'text-foreground',
               )}
             >
-              <button
-                type="button"
-                onClick={() => openConversation(conversation.id)}
-                aria-label={conversation.title}
+              <span
                 className={cn(
-                  'min-w-0 flex-1 rounded-lg px-3 py-2 text-left transition-colors',
-                  activeId === conversation.id
-                    ? 'text-accent-foreground'
-                    : 'text-foreground',
+                  'block truncate text-sm',
+                  activeId === conversation.id && 'font-medium',
                 )}
               >
-                <span
-                  className={cn(
-                    'block truncate text-sm',
-                    activeId === conversation.id && 'font-medium',
-                  )}
-                >
-                  {conversation.title}
+                {conversation.title}
+              </span>
+              <span className="block truncate text-[11px] text-muted-foreground">
+                {conversation.pinnedAt ? 'Pinned · ' : ''}
+                {searching && projectName ? `${projectName} · ` : ''}
+                {formatRelativeTime(conversation.updatedAt)}
+              </span>
+              {conversation.snippet ? (
+                <span className="block truncate text-[11px] text-muted-foreground/80">
+                  {conversation.snippet}
                 </span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  {formatRelativeTime(conversation.updatedAt)}
-                </span>
+              ) : null}
+            </button>
+            {folders.length ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={`Move ${conversation.title} to a project`}
+                    title="Move to project"
+                    className="rounded-md p-1.5 text-muted-foreground opacity-0 transition hover:bg-background hover:text-foreground group-hover:opacity-100"
+                  >
+                    <FolderIcon className="size-3.5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuItem
+                    onSelect={() => void moveConversation(conversation.id, null)}
+                  >
+                    No project
+                  </DropdownMenuItem>
+                  {folders.map((folder) => (
+                    <DropdownMenuItem
+                      key={folder.id}
+                      onSelect={() =>
+                        void moveConversation(conversation.id, folder.id)
+                      }
+                    >
+                      {folder.name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                setRenamingId(conversation.id);
+                setRenameDraft(conversation.title);
+              }}
+              aria-label={`Rename ${conversation.title}`}
+              title="Rename"
+              className="rounded-md p-1.5 text-muted-foreground opacity-0 transition hover:bg-background hover:text-foreground focus-visible:opacity-100 disabled:pointer-events-none group-hover:opacity-100"
+            >
+              <PencilIcon className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void updateConversation(conversation.id, {
+                  pinned: !conversation.pinnedAt,
+                }).then((result) => {
+                  if (result.ok) {
+                    setConversations((prev) =>
+                      prev.map((item) =>
+                        item.id === conversation.id
+                          ? { ...item, pinnedAt: result.data.pinnedAt }
+                          : item,
+                      ),
+                    );
+                  }
+                });
+              }}
+              aria-label="Pin conversation"
+              title="Pin"
+              className={cn(
+                'rounded-md p-1.5 opacity-0 transition hover:bg-background hover:text-foreground group-hover:opacity-100',
+                conversation.pinnedAt
+                  ? 'text-primary opacity-100'
+                  : 'text-muted-foreground',
+              )}
+            >
+              <PinIcon className="size-3.5" />
+            </button>
+            {showArchived ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void restoreConversation(conversation.id).then((result) => {
+                    if (result.ok) {
+                      setConversations((prev) =>
+                        prev.filter((item) => item.id !== conversation.id),
+                      );
+                    }
+                  });
+                }}
+                aria-label="Restore conversation"
+                title="Restore"
+                className="rounded-md p-1.5 text-muted-foreground opacity-0 transition hover:bg-background hover:text-foreground group-hover:opacity-100"
+              >
+                <ArchiveRestoreIcon className="size-3.5" />
               </button>
+            ) : (
               <button
                 type="button"
                 onClick={() => archiveConversation(conversation.id)}
@@ -822,20 +1662,251 @@ export function ChatClient({
               >
                 <Trash2Icon className="size-3.5" />
               </button>
-            </div>
-          ))
+            )}
+          </>
         )}
+      </div>
+    );
+  }
+
+  const conversationList = (
+    <>
+      <div className="space-y-2 p-3">
+        {activeProject ? (
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              aria-label="Back to all chats"
+              onClick={leaveProject}
+            >
+              <ChevronLeftIcon className="size-4" />
+            </Button>
+            {renamingProject ? (
+              <form
+                className="flex min-w-0 flex-1 items-center gap-1"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const name = renameDraft.trim();
+                  if (!name || !activeProjectId) {
+                    setRenamingProject(false);
+                    return;
+                  }
+                  void renameChatFolder(activeProjectId, name).then((result) => {
+                    if (!result.ok) {
+                      setError(result.error);
+                      return;
+                    }
+                    setFolders((prev) =>
+                      prev.map((item) =>
+                        item.id === activeProjectId
+                          ? { ...item, name: result.data.name }
+                          : item,
+                      ),
+                    );
+                    setRenamingProject(false);
+                  });
+                }}
+              >
+                <Input
+                  value={renameDraft}
+                  onChange={(event) => setRenameDraft(event.target.value)}
+                  className="h-8 text-xs"
+                  autoFocus
+                  aria-label="Project name"
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setRenamingProject(false);
+                  }}
+                />
+              </form>
+            ) : (
+              <button
+                type="button"
+                className="min-w-0 flex-1 truncate px-1 text-left text-sm font-medium"
+                onClick={() => {
+                  setRenameDraft(activeProject.name);
+                  setRenamingProject(true);
+                }}
+                title="Rename project"
+              >
+                {activeProject.name}
+              </button>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              aria-label="Project settings"
+              title="Project settings"
+              onClick={openProjectSettings}
+            >
+              <SlidersHorizontalIcon className="size-3.5" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+              aria-label="Delete project"
+              title="Delete project"
+              onClick={() => {
+                if (!activeProjectId) return;
+                if (
+                  !window.confirm(
+                    'Delete this project? Its chats will return to your main list.',
+                  )
+                ) {
+                  return;
+                }
+                void deleteChatFolder(activeProjectId).then((result) => {
+                  if (!result.ok) {
+                    setError(result.error);
+                    return;
+                  }
+                  const removedId = activeProjectId;
+                  setFolders((prev) =>
+                    prev.filter((item) => item.id !== removedId),
+                  );
+                  setConversations((prev) =>
+                    prev.map((item) =>
+                      item.folderId === removedId
+                        ? { ...item, folderId: null }
+                        : item,
+                    ),
+                  );
+                  leaveProject();
+                });
+              }}
+            >
+              <Trash2Icon className="size-3.5" />
+            </Button>
+          </div>
+        ) : null}
+        <Button onClick={startNewChat} className="w-full justify-start gap-2">
+          <PlusIcon className="size-4" />
+          {activeProject ? 'New chat in project' : 'New chat'}
+        </Button>
+        <div className="relative">
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            ref={sidebarSearchRef}
+            value={sidebarSearch}
+            onChange={(event) => setSidebarSearch(event.target.value)}
+            placeholder={
+              activeProject ? 'Search in project…' : 'Search chats…'
+            }
+            aria-label="Search conversations"
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowArchived((value) => !value)}
+          className="w-full rounded-md px-2 py-1 text-left text-[11px] text-muted-foreground hover:bg-muted"
+        >
+          {showArchived ? 'Show active chats' : 'Show archived chats'}
+        </button>
+      </div>
+      <nav className="flex-1 space-y-3 overflow-y-auto px-2 pb-3">
+        {!activeProject && !searching ? (
+          <div className="space-y-1">
+            <p className="px-2 pt-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+              Projects
+            </p>
+            {folders.map((folder) => {
+              const count = conversations.filter(
+                (item) => item.folderId === folder.id,
+              ).length;
+              return (
+                <button
+                  key={folder.id}
+                  type="button"
+                  onClick={() => enterProject(folder.id)}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted/70"
+                >
+                  <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+            <form
+              className="flex gap-1 px-1 pt-1"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const name = folderDraft.trim();
+                if (!name) return;
+                void createChatFolder(name).then((result) => {
+                  if (!result.ok) {
+                    setError(result.error);
+                    return;
+                  }
+                  setFolders((prev) =>
+                    [...prev, result.data].sort((left, right) =>
+                      left.name.localeCompare(right.name),
+                    ),
+                  );
+                  setFolderDraft('');
+                  enterProject(result.data.id, result.data.name);
+                });
+              }}
+            >
+              <Input
+                value={folderDraft}
+                onChange={(event) => setFolderDraft(event.target.value)}
+                placeholder="New project"
+                aria-label="New project name"
+                className="h-8 text-xs"
+              />
+              <Button type="submit" size="icon" className="size-8 shrink-0">
+                <PlusIcon className="size-3.5" />
+              </Button>
+            </form>
+          </div>
+        ) : null}
+        <div className="space-y-0.5">
+          {!activeProject && !searching ? (
+            <p className="px-2 pt-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+              Chats
+            </p>
+          ) : null}
+          {visibleConversations.length === 0 ? (
+            <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+              {searching
+                ? 'No matching chats.'
+                : activeProject
+                  ? 'No chats in this project yet.'
+                  : 'No conversations yet.'}
+            </p>
+          ) : (
+            visibleConversations.map((conversation) =>
+              conversationRow(conversation),
+            )
+          )}
+        </div>
       </nav>
     </>
   );
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] w-full overflow-hidden">
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
-        {conversationList}
-      </aside>
+    <div
+      className={cn(
+        'flex w-full overflow-hidden',
+        publicView ? 'h-screen' : 'h-[calc(100vh-4rem)]',
+      )}
+    >
+      {!publicView ? (
+        <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
+          {conversationList}
+        </aside>
+      ) : null}
 
-      {sidebarOpen ? (
+      {!publicView && sidebarOpen ? (
         <div className="fixed inset-0 z-50 flex md:hidden">
           <button
             type="button"
@@ -903,9 +1974,78 @@ export function ChatClient({
               {activeConversation?.title ?? 'New chat'}
             </h1>
             <p className="truncate text-xs text-muted-foreground">
-              {activeModelLabel}
+              {activeProject
+                ? `${activeProject.name} · ${activeModelLabel}`
+                : activeModelLabel}
             </p>
           </div>
+          {messages.length > 0 && !readOnly ? (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Custom instructions"
+                title="Custom instructions"
+                onClick={() => setInstructionsOpen(true)}
+              >
+                <PencilIcon className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Share conversation"
+                title="Share with organization"
+                onClick={() => setShareOpen(true)}
+              >
+                {shareCopied ? (
+                  <CheckIcon className="size-4" />
+                ) : (
+                  <ShareIcon className="size-4" />
+                )}
+              </Button>
+              {conversationIsShared ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Stop sharing"
+                  title="Stop sharing"
+                  onClick={() => {
+                    if (!activeId) return;
+                    void unshareConversation(activeId).then((result) => {
+                      if (!result.ok) {
+                        setError(result.error);
+                        return;
+                      }
+                      setConversations((prev) =>
+                        prev.map((item) =>
+                          item.id === activeId
+                            ? { ...item, isShared: false }
+                            : item,
+                        ),
+                      );
+                    });
+                  }}
+                >
+                  <Link2OffIcon className="size-4" />
+                </Button>
+              ) : null}
+            </>
+          ) : null}
+          {messages.length > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Export conversation"
+              title="Export as Markdown"
+              onClick={exportConversation}
+            >
+              <DownloadIcon className="size-4" />
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
@@ -918,7 +2058,14 @@ export function ChatClient({
           </Button>
         </header>
 
-        {!providerConnected ? (
+        {readOnly ? (
+          <div className="border-b border-primary/20 bg-primary/5 px-4 py-2 text-center text-xs text-muted-foreground">
+            Shared conversation — read only. Sign in to your workspace to start
+            your own chats.
+          </div>
+        ) : null}
+
+        {!providerConnected && !publicView ? (
           <div className="flex items-center gap-2 border-b border-border bg-warning/10 px-4 py-2.5 text-sm text-warning">
             <TriangleAlertIcon className="size-4 shrink-0" />
             <span>
@@ -977,12 +2124,19 @@ export function ChatClient({
                 </span>
                 <div>
                   <p className="text-lg font-semibold">
-                    How can I help you today?
+                    {readOnly
+                      ? 'Shared conversation'
+                      : 'How can I help you today?'}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Ask a question, or attach a file to chat about it.
+                    {readOnly
+                      ? 'This shared conversation has no messages yet.'
+                      : activeProject
+                        ? `Start a chat inside ${activeProject.name}.`
+                        : 'Ask a question, or attach a file to chat about it.'}
                   </p>
                 </div>
+                {!readOnly ? (
                 <div className="grid w-full max-w-xl gap-2 sm:grid-cols-2">
                   {SUGGESTIONS.map((suggestion) => (
                     <button
@@ -998,37 +2152,110 @@ export function ChatClient({
                     </button>
                   ))}
                 </div>
+                ) : null}
               </div>
             ) : (
               <div className="space-y-6">
-                {messages.map((message, index) => (
-                  <MessageRow
-                    key={message.id}
-                    message={message}
-                    streaming={streamingId === message.id}
-                    usage={messageUsage[message.id]}
-                    isLastAssistant={
-                      message.role === 'ASSISTANT' &&
-                      messages
-                        .slice(index + 1)
-                        .every((item) => item.role !== 'ASSISTANT')
-                    }
-                    sending={sending}
-                    onOpenCanvas={setActiveCanvas}
-                    onContinueClarifying={
-                      !sending
-                        ? (text) => {
-                            void sendMessage(text);
-                          }
-                        : undefined
-                    }
-                    onRegenerate={
-                      !sending && activeId && !message.id.startsWith('temp-')
-                        ? () => void regenerateAssistant(message.id)
-                        : undefined
-                    }
-                  />
-                ))}
+                {liveTools.length || citations.length ? (
+                  <div className="space-y-2 rounded-xl border border-border bg-muted/20 p-3">
+                    {liveTools.map((tool) => (
+                      <p key={tool.title} className="text-xs text-muted-foreground">
+                        {tool.status === 'running' ? '…' : '✓'} {tool.title}
+                        {tool.detail ? ` · ${tool.detail}` : ''}
+                      </p>
+                    ))}
+                    {citations.length ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {citations.map((citation) =>
+                          citation.url ? (
+                            <a
+                              key={citation.id}
+                              href={citation.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted"
+                            >
+                              {citation.title}
+                            </a>
+                          ) : (
+                            <span
+                              key={citation.id}
+                              className="rounded-md border border-border bg-background px-2 py-1 text-[11px]"
+                            >
+                              {citation.title}
+                            </span>
+                          ),
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                {visibleMessages.map((message, index) => {
+                  const next = visibleMessages[index + 1];
+                  const previous = visibleMessages[index - 1];
+                  if (
+                    message.metadata?.compareSlot === 1 &&
+                    previous?.metadata?.compareSlot === 0
+                  ) {
+                    return null;
+                  }
+                  if (
+                    message.metadata?.compareSlot === 0 &&
+                    next?.metadata?.compareSlot === 1
+                  ) {
+                    return (
+                      <div
+                        key={`${message.id}-${next.id}`}
+                        className="space-y-3"
+                      >
+                        <div className="grid gap-4 lg:grid-cols-2">
+                          <div className="min-w-0 rounded-xl border border-border p-3">
+                            <p className="mb-3 text-[11px] font-medium text-muted-foreground">
+                              Response A
+                            </p>
+                            {renderMessageRow(message, index)}
+                          </div>
+                          <div className="min-w-0 rounded-xl border border-border p-3">
+                            <p className="mb-3 text-[11px] font-medium text-muted-foreground">
+                              Response B
+                            </p>
+                            {renderMessageRow(next, index + 1)}
+                          </div>
+                        </div>
+                        {!readOnly && !sending ? (
+                          <div className="flex flex-wrap justify-center gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void pickCompare(message.id)}
+                            >
+                              Use response A
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void pickCompare(next.id)}
+                            >
+                              Use response B
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => void mergeCompare(message.id)}
+                            >
+                              Merge both
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={message.id}>{renderMessageRow(message, index)}</div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1050,7 +2277,7 @@ export function ChatClient({
             {error ? (
               <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 <p>{error}</p>
-                {failedMessage ? (
+                {failedMessage && !readOnly ? (
                   <button
                     type="button"
                     onClick={() => sendMessage(failedMessage)}
@@ -1063,6 +2290,11 @@ export function ChatClient({
               </div>
             ) : null}
 
+            {readOnly ? (
+              <p className="text-center text-xs text-muted-foreground">
+                This shared conversation is read-only.
+              </p>
+            ) : (
             <form
               onSubmit={handleSend}
               className="rounded-2xl border border-border bg-card shadow-card transition-colors focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-ring/20"
@@ -1148,6 +2380,18 @@ export function ChatClient({
               />
 
               <div className="flex items-center gap-2 px-2.5 pb-2.5">
+                <Button
+                  type="button"
+                  variant={listening ? 'default' : 'ghost'}
+                  size="icon"
+                  className="shrink-0"
+                  disabled={sending || !providerConnected}
+                  title={listening ? 'Stop listening' : 'Voice input'}
+                  aria-label={listening ? 'Stop voice input' : 'Start voice input'}
+                  onClick={toggleDictation}
+                >
+                  <MicIcon className="size-4" />
+                </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -1217,8 +2461,63 @@ export function ChatClient({
                   </SelectContent>
                 </Select>
 
+                <Button
+                  type="button"
+                  variant={webSearch ? 'default' : 'outline'}
+                  size="sm"
+                  className={cn(
+                    'shrink-0 gap-1.5 px-2.5',
+                    webSearch && 'ring-2 ring-primary/30',
+                    !webSearch && 'text-muted-foreground',
+                  )}
+                  aria-pressed={webSearch}
+                  aria-label={
+                    webSearch ? 'Web search enabled' : 'Enable web search'
+                  }
+                  title={webSearch ? 'Web search is on' : 'Search the web'}
+                  onClick={() => {
+                    const next = !webSearch;
+                    setWebSearch(next);
+                    if (activeId) {
+                      void updateConversation(activeId, {
+                        webSearchEnabled: next,
+                      });
+                    }
+                  }}
+                >
+                  <GlobeIcon className="size-3.5" />
+                  <span className="hidden sm:inline">
+                    {webSearch ? 'Search on' : 'Search'}
+                  </span>
+                </Button>
+                <Select
+                  value={compareModel || 'none'}
+                  onValueChange={(value) =>
+                    setCompareModel(value === 'none' ? '' : value)
+                  }
+                  disabled={sending || availableModels.length < 2}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-32 shrink-0 border-0 bg-muted/60 shadow-none sm:w-40 dark:bg-muted/60"
+                    aria-label="Compare with"
+                  >
+                    <SelectValue placeholder="Compare" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No compare</SelectItem>
+                    {availableModels
+                      .filter((item) => item.id !== model)
+                      .map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          vs {item.label}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+
                 <span className="ml-auto hidden text-[11px] text-muted-foreground sm:block">
-                  Enter to send · Esc to stop · Shift+Enter for a new line
+                  Enter to send · Esc to stop · Ctrl+K search · Ctrl+Shift+E export
                 </span>
 
                 {sending ? (
@@ -1246,13 +2545,21 @@ export function ChatClient({
                 )}
               </div>
             </form>
+            )}
           </div>
         </div>
       </section>
 
+      {activeCanvas && isLargeScreen ? (
+        <CanvasSidePanel
+          artifact={activeCanvas}
+          onClose={() => setActiveCanvas(null)}
+        />
+      ) : null}
+
       <CanvasModal
         artifact={activeCanvas}
-        open={Boolean(activeCanvas)}
+        open={Boolean(activeCanvas) && !isLargeScreen}
         onClose={() => setActiveCanvas(null)}
       />
 
@@ -1389,151 +2696,208 @@ export function ChatClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
 
-function MessageRow({
-  message,
-  streaming,
-  usage,
-  isLastAssistant,
-  sending,
-  onOpenCanvas,
-  onContinueClarifying,
-  onRegenerate,
-}: {
-  message: ChatMessage;
-  streaming: boolean;
-  usage?: MessageUsage;
-  isLastAssistant?: boolean;
-  sending?: boolean;
-  onOpenCanvas: (artifact: CanvasArtifact) => void;
-  onContinueClarifying?: (message: string) => void;
-  onRegenerate?: () => void;
-}) {
-  const isUser = message.role === 'USER';
-
-  if (isUser) {
-    return (
-      <div className="group/message flex justify-end">
-        <div className="max-w-[85%] min-w-0 space-y-2 sm:max-w-[75%]">
-          <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-primary-foreground">
-            <p className="text-[0.9375rem] leading-7 whitespace-pre-wrap">
-              {message.content}
-            </p>
-            {message.attachments?.length ? (
-              <div className="space-y-1 border-t border-primary-foreground/25 pt-2">
-                {message.attachments.map((file) => (
-                  <a
-                    key={file.id}
-                    href={`/api/files/${file.id}/download`}
-                    className="flex items-center gap-1.5 text-xs underline underline-offset-2"
-                  >
-                    <FileIcon className="size-3.5 shrink-0" />
-                    <span className="truncate">{file.filename}</span>
-                  </a>
-                ))}
+      <Dialog open={projectSettingsOpen} onOpenChange={setProjectSettingsOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Project settings</DialogTitle>
+            <DialogDescription>
+              Instructions and files apply to every new chat in this project.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground">
+                Default model
+              </label>
+              <Select
+                value={projectDefaultModel || 'none'}
+                onValueChange={(value) =>
+                  setProjectDefaultModel(value === 'none' ? '' : value)
+                }
+              >
+                <SelectTrigger aria-label="Project default model">
+                  <SelectValue placeholder="Same as workspace default" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Workspace default</SelectItem>
+                  {modelsByProvider.map(([provider, providerModels]) => (
+                    <SelectGroup key={provider}>
+                      <SelectLabel>
+                        {PROVIDER_LABELS[provider] ?? provider}
+                      </SelectLabel>
+                      {providerModels.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground">
+                Project instructions
+              </label>
+              <Textarea
+                value={projectInstructions}
+                onChange={(event) => setProjectInstructions(event.target.value)}
+                rows={5}
+                placeholder="Tone, goals, or context for chats in this project…"
+                aria-label="Project instructions"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground">
+                Attached workspace files
+              </label>
+              <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-border p-2">
+                {libraryFiles.length ? (
+                  libraryFiles.map((file) => {
+                    const checked = projectFileIds.includes(file.id);
+                    return (
+                      <label
+                        key={file.id}
+                        className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-muted/60"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            setProjectFileIds((prev) =>
+                              checked
+                                ? prev.filter((id) => id !== file.id)
+                                : [...prev, file.id],
+                            )
+                          }
+                        />
+                        <span className="truncate">{file.filename}</span>
+                      </label>
+                    );
+                  })
+                ) : (
+                  <p className="px-2 py-1 text-xs text-muted-foreground">
+                    No files in your library yet.
+                  </p>
+                )}
               </div>
-            ) : null}
+            </div>
           </div>
-          <div className="flex justify-end opacity-100 sm:opacity-0 sm:transition-opacity sm:focus-within:opacity-100 sm:group-hover/message:opacity-100">
-            <MessageCopyButton content={message.content} />
-          </div>
-        </div>
-      </div>
-    );
-  }
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setProjectSettingsOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!activeProjectId) return;
+                void updateChatFolder(activeProjectId, {
+                  instructions: projectInstructions.trim() || null,
+                  defaultModel: projectDefaultModel || null,
+                  fileIds: projectFileIds,
+                }).then((result) => {
+                  if (!result.ok) {
+                    setError(result.error);
+                    return;
+                  }
+                  setFolders((prev) =>
+                    prev.map((item) =>
+                      item.id === activeProjectId ? result.data : item,
+                    ),
+                  );
+                  if (!activeId) {
+                    setModel(resolveProjectModel(result.data));
+                  }
+                  setProjectSettingsOpen(false);
+                });
+              }}
+            >
+              Save project
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-  const empty = message.content.length === 0;
+      <ChatShareDialog
+        open={shareOpen}
+        expiry={shareExpiry}
+        onOpenChange={setShareOpen}
+        onExpiryChange={setShareExpiry}
+        onCopy={() => {
+          if (!activeId) return;
+          void shareConversation(activeId, shareExpiry).then((result) => {
+            if (!result.ok) {
+              setError(result.error);
+              return;
+            }
+            const url = `${window.location.origin}/share/${result.data.shareToken}`;
+            void navigator.clipboard.writeText(url);
+            setShareCopied(true);
+            window.setTimeout(() => setShareCopied(false), 2000);
+            setConversations((prev) =>
+              prev.map((item) =>
+                item.id === activeId ? { ...item, isShared: true } : item,
+              ),
+            );
+            setShareOpen(false);
+            setError('');
+          });
+        }}
+      />
 
-  return (
-    <div className="group/message flex gap-3">
-      <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-card text-primary">
-        <SparklesIcon className="size-4" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <MessageContent
-          content={message.content}
-          streaming={streaming}
-          disabled={sending}
-          onOpenCanvas={onOpenCanvas}
-          onContinueClarifying={
-            isLastAssistant && !streaming ? onContinueClarifying : undefined
-          }
-        />
-
-        {message.attachments?.length ? (
-          <div className="mt-3 space-y-1 border-t border-border pt-2">
-            {message.attachments.map((file) => (
-              <a
-                key={file.id}
-                href={`/api/files/${file.id}/download`}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              >
-                <FileIcon className="size-3.5 shrink-0" />
-                <span className="truncate">{file.filename}</span>
-              </a>
-            ))}
-          </div>
-        ) : null}
-
-        {!empty && !streaming ? (
-          <div className="mt-2 flex flex-wrap items-center gap-1 opacity-100 sm:opacity-0 sm:transition-opacity sm:focus-within:opacity-100 sm:group-hover/message:opacity-100">
-            <MessageCopyButton content={message.content} />
-            {onRegenerate && isLastAssistant ? (
-              <button
-                type="button"
-                onClick={onRegenerate}
-                aria-label="Regenerate response"
-                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <RefreshCwIcon className="size-3.5" />
-                Regenerate
-              </button>
-            ) : null}
-            {usage ? (
-              <span className="ml-1 text-[11px] text-muted-foreground">
-                {usage.promptTokens + usage.completionTokens} tokens
-                {usage.estimatedCostCents > 0
-                  ? ` · $${(usage.estimatedCostCents / 100).toFixed(4)}`
-                  : ''}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+      <Dialog open={instructionsOpen} onOpenChange={setInstructionsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Custom instructions</DialogTitle>
+            <DialogDescription>
+              These notes apply only to this conversation and are included in
+              the model prompt.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={instructions}
+            onChange={(event) => setInstructions(event.target.value)}
+            rows={8}
+            placeholder="Tone, format, audience, or facts the assistant should always follow…"
+            aria-label="Custom instructions"
+          />
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setInstructionsOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!activeId) {
+                  setInstructionsOpen(false);
+                  return;
+                }
+                void updateConversation(activeId, { instructions }).then(
+                  (result) => {
+                    if (!result.ok) {
+                      setError(result.error);
+                      return;
+                    }
+                    setInstructionsOpen(false);
+                  },
+                );
+              }}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
-  );
-}
-
-function MessageCopyButton({ content }: { content: string }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      setCopied(false);
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={() => void copy()}
-      aria-label={copied ? 'Response copied' : 'Copy response'}
-      className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-    >
-      {copied ? (
-        <CheckIcon className="size-3.5 text-success" />
-      ) : (
-        <CopyIcon className="size-3.5" />
-      )}
-      {copied ? 'Copied' : 'Copy'}
-    </button>
   );
 }
 

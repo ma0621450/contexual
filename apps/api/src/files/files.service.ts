@@ -264,4 +264,136 @@ export class FilesService {
     }
     return files;
   }
+
+  async searchWorkspaceFiles(
+    organizationId: string,
+    query: string,
+    limit = 5,
+    scopeFileIds?: string[],
+    embeddingApiKey?: string,
+  ) {
+    const terms = query
+      .toLowerCase()
+      .split(/\s+/)
+      .map((term) => term.replace(/[^\w.-]/g, ''))
+      .filter((term) => term.length > 2)
+      .slice(0, 6);
+    if (terms.length === 0) return [];
+
+    const files = await this.prisma.withTenant(organizationId, (tx) =>
+      tx.storedFile.findMany({
+        where: {
+          organizationId,
+          processingStatus: FileProcessingStatus.READY,
+          extractedText: { not: null },
+          ...(scopeFileIds?.length ? { id: { in: scopeFileIds } } : {}),
+        },
+        select: {
+          id: true,
+          filename: true,
+          extractedText: true,
+          embedding: true,
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: scopeFileIds?.length ? scopeFileIds.length : 80,
+      }),
+    );
+
+    const queryVector = embeddingApiKey
+      ? await embedText(query, embeddingApiKey)
+      : null;
+
+    const ranked = await Promise.all(
+      files.map(async (file) => {
+        const text = file.extractedText ?? '';
+        const lower = text.toLowerCase();
+        let score = terms.reduce((total, term) => {
+          const filenameHits = file.filename.toLowerCase().includes(term)
+            ? 8
+            : 0;
+          const occurrences = lower.split(term).length - 1;
+          return total + filenameHits + Math.min(occurrences, 12);
+        }, 0);
+
+        let vector = asNumberArray(file.embedding);
+        if (queryVector && embeddingApiKey && vector.length === 0 && text) {
+          vector = await embedText(text.slice(0, 8000), embeddingApiKey);
+          if (vector.length) {
+            await this.prisma.storedFile.update({
+              where: { id: file.id },
+              data: { embedding: vector },
+            });
+          }
+        }
+        if (queryVector && vector.length) {
+          score += cosineSimilarity(queryVector, vector) * 40;
+        }
+        if (score <= 0) return null;
+
+        const anchor = terms.find((term) => lower.includes(term)) ?? terms[0]!;
+        const index = Math.max(0, lower.indexOf(anchor));
+        const snippetStart = Math.max(0, index - 60);
+
+        return {
+          id: file.id,
+          filename: file.filename,
+          score,
+          snippet: text.slice(snippetStart, snippetStart + 220).trim(),
+          excerpt: text.slice(0, 2400),
+        };
+      }),
+    );
+
+    return ranked
+      .filter((item): item is NonNullable<typeof item> => Boolean(item))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, limit);
+  }
+}
+
+function asNumberArray(value: unknown): number[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'number')
+    ? value
+    : [];
+}
+
+function cosineSimilarity(left: number[], right: number[]) {
+  const size = Math.min(left.length, right.length);
+  if (size === 0) return 0;
+  let dot = 0;
+  let leftNorm = 0;
+  let rightNorm = 0;
+  for (let index = 0; index < size; index += 1) {
+    dot += left[index]! * right[index]!;
+    leftNorm += left[index]! ** 2;
+    rightNorm += right[index]! ** 2;
+  }
+  const denom = Math.sqrt(leftNorm) * Math.sqrt(rightNorm);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+async function embedText(text: string, apiKey: string): Promise<number[]> {
+  const trimmed = text.replace(/\s+/g, ' ').trim().slice(0, 8000);
+  if (!trimmed) return [];
+  try {
+    const response = await fetch('https://api.openai.com/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'text-embedding-3-small',
+        input: trimmed,
+      }),
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok) return [];
+    const body = (await response.json()) as {
+      data?: { embedding?: number[] }[];
+    };
+    return body.data?.[0]?.embedding ?? [];
+  } catch {
+    return [];
+  }
 }

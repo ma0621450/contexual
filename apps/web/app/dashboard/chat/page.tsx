@@ -1,34 +1,9 @@
-import { redirect } from 'next/navigation';
-import {
-  getConversations,
-  getCurrentUser,
-  getFiles,
-  getProviderModels,
-  getProviderStatus,
-} from '@/lib/api/server';
 import { ChatClient } from './ChatClient';
+import { loadChatPageContext } from './load-chat';
 
 export default async function ChatPage() {
-  const user = await getCurrentUser();
-
-  if (!user) {
-    redirect('/login');
-  }
-
-  if (!user.emailVerifiedAt) {
-    redirect('/verify-email');
-  }
-
-  if (!user.activeOrganizationId || user.memberships.length === 0) {
-    redirect('/onboarding');
-  }
-
-  const [conversations, providerStatus, models, files] = await Promise.all([
-    getConversations(),
-    getProviderStatus(),
-    getProviderModels(),
-    getFiles(),
-  ]);
+  const { user, conversations, providerStatus, models, files } =
+    await loadChatPageContext();
 
   return (
     <ChatClient

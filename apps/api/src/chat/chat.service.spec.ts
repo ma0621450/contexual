@@ -90,6 +90,14 @@ describe('ChatService streaming lifecycle', () => {
     memories as never,
     files as never,
     reservations as never,
+    {
+      collectContext: jest.fn().mockResolvedValue({
+        context: '',
+        events: [],
+        webSearchActive: false,
+        hadResults: false,
+      }),
+    } as never,
   );
 
   beforeEach(() => {

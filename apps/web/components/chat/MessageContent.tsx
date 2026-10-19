@@ -8,7 +8,7 @@ import {
   AnalyzingIndicator,
   ThinkingBlock,
 } from './ThinkingBlock';
-import { CollapseBlock, FileTreeBlock } from './RichBlocks';
+import { CollapseBlock, FileTreeBlock, ToolStepBlock, DownloadBlock, CitationChip } from './RichBlocks';
 import {
   isPreviewableLanguage,
   parseMessageContent,
@@ -41,6 +41,34 @@ function groupSegments(segments: ContentSegment[]): Array<
   return grouped;
 }
 
+function weaveCitationsIntoMarkdown(
+  segments: ContentSegment[],
+): ContentSegment[] {
+  const weaved: ContentSegment[] = [];
+
+  for (const segment of segments) {
+    const last = weaved[weaved.length - 1];
+    if (segment.type === 'citation' && last?.type === 'markdown') {
+      last.content += ` \`${`【${segment.label}】`}\``;
+      continue;
+    }
+    if (segment.type === 'citation') {
+      weaved.push({
+        type: 'markdown',
+        content: `\`${`【${segment.label}】`}\``,
+      });
+      continue;
+    }
+    if (segment.type === 'markdown' && last?.type === 'markdown') {
+      last.content += segment.content;
+      continue;
+    }
+    weaved.push(segment);
+  }
+
+  return weaved;
+}
+
 export function MessageContent({
   content,
   streaming = false,
@@ -55,14 +83,17 @@ export function MessageContent({
   onContinueClarifying?: (message: string) => void;
 }) {
   const segments = useMemo(() => parseMessageContent(content), [content]);
-  const grouped = useMemo(() => groupSegments(segments), [segments]);
+  const grouped = useMemo(
+    () => groupSegments(weaveCitationsIntoMarkdown(segments)),
+    [segments],
+  );
 
   if (!content.trim()) {
     return streaming ? <AnalyzingIndicator /> : null;
   }
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-3">
       {grouped.map((segment, index) => {
         if (segment.type === 'thinking') {
           return (
@@ -115,6 +146,28 @@ export function MessageContent({
         if (segment.type === 'filetree') {
           return (
             <FileTreeBlock key={`tree-${index}`} content={segment.content} />
+          );
+        }
+
+        if (segment.type === 'tool') {
+          return <ToolStepBlock key={`tool-${index}`} data={segment.data} />;
+        }
+
+        if (segment.type === 'download') {
+          return (
+            <DownloadBlock
+              key={`download-${index}`}
+              filename={segment.filename}
+              content={segment.content}
+              mimeType={segment.mimeType}
+              label={segment.label}
+            />
+          );
+        }
+
+        if (segment.type === 'citation') {
+          return (
+            <CitationChip key={`cite-${index}`} label={segment.label} />
           );
         }
 

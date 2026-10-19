@@ -10,10 +10,54 @@ vi.mock('next/link', () => ({
     <a href={href}>{children}</a>
   ),
 }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    replace: vi.fn(),
+    push: vi.fn(),
+    refresh: vi.fn(),
+  }),
+  usePathname: () => '/dashboard/chat',
+}));
 vi.mock('@/lib/api/client', () => ({
   apiFetch: vi.fn(),
   streamChat: vi.fn(),
+  streamRegenerate: vi.fn(),
+  streamEditMessage: vi.fn(),
+  searchConversations: vi.fn(async () => ({ ok: true, data: [] })),
+  renameConversation: vi.fn(),
+  deleteMessage: vi.fn(),
+  setMessageFeedback: vi.fn(),
+  updateConversation: vi.fn(),
+  listChatFolders: vi.fn(async () => ({ ok: true, data: [] })),
+  createChatFolder: vi.fn(),
+  renameChatFolder: vi.fn(),
+  deleteChatFolder: vi.fn(),
+  restoreConversation: vi.fn(),
+  shareConversation: vi.fn(),
+  unshareConversation: vi.fn(),
+  selectMessageBranch: vi.fn(),
+  updateChatFolder: vi.fn(),
+  pickCompareWinner: vi.fn(),
+  mergeCompareResponses: vi.fn(),
+  runSandbox: vi.fn(),
 }));
+const { getSelectAriaLabel } = vi.hoisted(() => ({
+  getSelectAriaLabel(node: ReactNode): string | undefined {
+    if (!node || typeof node !== 'object') return undefined;
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const found = getSelectAriaLabel(child);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    const props = (node as { props?: Record<string, unknown> }).props;
+    if (!props) return undefined;
+    if (typeof props['aria-label'] === 'string') return props['aria-label'];
+    return getSelectAriaLabel(props.children as ReactNode);
+  },
+}));
+
 vi.mock('@/components/ui/select', () => ({
   Select: ({
     children,
@@ -27,7 +71,7 @@ vi.mock('@/components/ui/select', () => ({
     disabled?: boolean;
   }) => (
     <select
-      aria-label="Chat model"
+      aria-label={getSelectAriaLabel(children) ?? 'Chat model'}
       value={value}
       onChange={(event) => onValueChange(event.target.value)}
       disabled={disabled}

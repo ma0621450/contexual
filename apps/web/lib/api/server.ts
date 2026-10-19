@@ -94,6 +94,20 @@ export type ConversationSummary = {
   model: string;
   provider: AiProviderId;
   updatedAt: string;
+  pinnedAt?: string | null;
+  folderId?: string | null;
+  isShared?: boolean;
+  isArchived?: boolean;
+  snippet?: string;
+};
+
+export type ChatFolder = {
+  id: string;
+  name: string;
+  createdAt: string;
+  instructions?: string | null;
+  defaultModel?: string | null;
+  fileIds?: string[];
 };
 
 export type ChatMessage = {
@@ -101,6 +115,13 @@ export type ChatMessage = {
   role: 'USER' | 'ASSISTANT' | 'SYSTEM';
   content: string;
   createdAt: string;
+  parentId?: string | null;
+  metadata?: {
+    feedback?: 'up' | 'down';
+    compareSlot?: number;
+    compareWinner?: boolean;
+    compareMerged?: boolean;
+  };
   attachments?: {
     id: string;
     filename: string;
@@ -114,6 +135,15 @@ export type ConversationDetail = {
   title: string;
   model: string;
   provider: AiProviderId;
+  folderId?: string | null;
+  pinnedAt?: string | null;
+  instructions?: string | null;
+  shareToken?: string | null;
+  isShared?: boolean;
+  shareExpiresAt?: string | null;
+  activeLeafId?: string | null;
+  webSearchEnabled?: boolean;
+  isArchived?: boolean;
   messages: ChatMessage[];
 };
 
@@ -319,6 +349,32 @@ export async function getConversation(
   id: string,
 ): Promise<ConversationDetail | null> {
   return serverFetch<ConversationDetail>(`/chat/conversations/${id}`);
+}
+
+export async function getSharedConversation(
+  token: string,
+): Promise<ConversationDetail | null> {
+  return serverFetch<ConversationDetail>(`/chat/shared/${token}`);
+}
+
+export async function getPublicConversation(
+  token: string,
+): Promise<ConversationDetail | null> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_API_URL}/api/chat/public/${token}`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+  try {
+    return (await response.json()) as ConversationDetail;
+  } catch {
+    return null;
+  }
 }
 
 export async function getMemories(): Promise<MemoryItem[]> {
