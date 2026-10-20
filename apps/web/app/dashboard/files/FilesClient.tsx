@@ -7,7 +7,6 @@ import {
   DownloadIcon,
   LoaderCircleIcon,
   Trash2Icon,
-  UploadIcon,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api/client';
 import type { FileProcessingStatus, StoredFile } from '@/lib/api/server';
@@ -140,7 +139,7 @@ export function FilesClient({
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1070px] px-4 pt-8 pb-10 sm:px-6">
+    <div className="mx-auto w-full max-w-[1118px] px-4 pt-8 pb-10 sm:px-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-[32px] leading-10 font-semibold tracking-[-1.2px] text-white sm:text-[48px] sm:leading-[56px] sm:tracking-[-1.92px]">
@@ -168,13 +167,9 @@ export function FilesClient({
             onClick={() => inputRef.current?.click()}
             disabled={uploading}
             aria-busy={uploading}
-            className="h-[37px] rounded-[10px] bg-white px-4 text-[#111111] hover:bg-white/90 focus-visible:ring-white/50"
+            className="h-9 min-w-[148px] rounded-lg bg-[#2a2a2a] px-5 text-white hover:bg-[#333333] focus-visible:ring-white/50"
           >
-            {uploading ? (
-              <LoaderCircleIcon className="animate-spin" />
-            ) : (
-              <UploadIcon />
-            )}
+            {uploading ? <LoaderCircleIcon className="animate-spin" /> : null}
             {uploading ? 'Uploading…' : 'Upload'}
           </Button>
         </div>

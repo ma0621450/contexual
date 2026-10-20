@@ -291,9 +291,9 @@ export function UsageClient({
       : null;
 
   return (
-    <div className="mx-auto w-full max-w-[1070px] px-4 pt-8 pb-10 sm:px-6">
+    <div className="mx-auto w-full max-w-[1118px] px-4 pt-8 pb-10 sm:px-6">
       <div>
-        <h1 className="text-[30px] leading-9 font-semibold tracking-[-0.6px] text-white">
+        <h1 className="text-[32px] leading-10 font-semibold tracking-[-1.2px] text-white sm:text-[48px] sm:leading-[56px] sm:tracking-[-1.92px]">
           {isAdmin ? 'Usage & billing' : 'My usage'}
         </h1>
         <p className="mt-1 text-sm text-[#a1a1aa]">

@@ -14,7 +14,7 @@ import {
   HardDriveIcon,
   LoaderCircleIcon,
   PaperclipIcon,
-  PanelLeftIcon,
+  PanelBottomIcon,
   PencilIcon,
   PlusIcon,
   SearchIcon,
@@ -350,8 +350,6 @@ export function ChatClient({
       withCompareSiblings(messages, walkToRoot(messages, activeLeafId)),
     [messages, activeLeafId],
   );
-  const activeModelLabel =
-    availableModels.find((item) => item.id === model)?.label ?? 'No model';
   const conversationFiles = useMemo(() => {
     const unique = new Map<string, ChatAttachment>();
     for (const message of messages) {
@@ -1653,7 +1651,7 @@ export function ChatClient({
   }
 
   const historyCluster = (label: string) => (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-1.5">
       <button
         type="button"
         onClick={startNewChat}
@@ -1678,7 +1676,7 @@ export function ChatClient({
         onClick={toggleHistory}
         className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-white transition hover:bg-white/[0.06]"
       >
-        <PanelLeftIcon className="size-4" />
+        <PanelBottomIcon className="size-4" />
       </button>
     </div>
   );
@@ -1952,7 +1950,7 @@ export function ChatClient({
       {!publicView ? (
         <aside
           className={cn(
-            'hidden shrink-0 overflow-hidden transition-[width,padding] duration-300 ease-out md:flex',
+            'order-last hidden shrink-0 overflow-hidden transition-[width,padding] duration-300 ease-out md:flex',
             historyOpen ? 'w-[292px] p-3' : 'w-0 p-0',
           )}
           aria-hidden={!historyOpen}
@@ -1964,14 +1962,14 @@ export function ChatClient({
       ) : null}
 
       {!publicView && sidebarOpen ? (
-        <div className="fixed inset-0 z-50 flex md:hidden">
+        <div className="fixed inset-0 z-50 flex justify-end md:hidden">
           <button
             type="button"
             aria-label="Close conversation list"
             onClick={() => setSidebarOpen(false)}
             className="absolute inset-0 bg-foreground/25 backdrop-blur-[2px]"
           />
-          <aside className="relative flex h-full w-72 max-w-[85%] flex-col border-r border-white/10 bg-[#111111] shadow-elevated">
+          <aside className="relative flex h-full w-72 max-w-[85%] flex-col border-l border-white/10 bg-[#111111] shadow-elevated">
             {conversationList}
           </aside>
         </div>
@@ -2030,10 +2028,7 @@ export function ChatClient({
           <h1 className="sr-only">
             {activeConversation?.title ?? 'New chat'}
           </h1>
-          <div className={cn(historyOpen && 'md:hidden')}>
-            {historyCluster('New Chat')}
-          </div>
-          <div className="ml-auto flex items-center gap-1">
+          <div className="flex items-center gap-1">
           {messages.length > 0 && !readOnly ? (
             <>
               <Button
@@ -2102,6 +2097,11 @@ export function ChatClient({
             </Button>
           ) : null}
           </div>
+          {!publicView ? (
+            <div className={cn('ml-auto', historyOpen && 'md:hidden')}>
+              {historyCluster('New Chat')}
+            </div>
+          ) : null}
         </header>
 
         {readOnly ? (
@@ -2342,7 +2342,15 @@ export function ChatClient({
               : undefined,
           )}
         >
-          <div className={cn(chatColumnClass, 'py-3 sm:py-4')}>
+          <div
+            className={cn(
+              chatColumnClass,
+              'py-3 sm:py-4',
+              messages.length === 0 &&
+                !loadingConversation &&
+                'max-w-[min(100%,900px)]',
+            )}
+          >
             {error ? (
               <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 <p>{error}</p>

@@ -90,7 +90,7 @@ export function OverviewView({
 
       <section
         aria-label="Getting started"
-        className="relative mt-14 w-full overflow-hidden rounded-[16px] border border-white bg-[rgba(23,23,23,0.06)] px-4 pt-4 pb-6 backdrop-blur-[42px]"
+        className="relative mt-14 w-full overflow-hidden rounded-[16px] border border-white/20 bg-[rgba(23,23,23,0.06)] px-4 pt-4 pb-6 backdrop-blur-[42px]"
       >
         <h2 className="text-[18px] leading-7 font-semibold tracking-[-0.36px] text-white">
           🎉 Getting started with Promplex
@@ -136,17 +136,20 @@ export function OverviewView({
         <JoinInviteForm />
       </section>
 
-      <section className="mt-5 grid w-full gap-4 md:grid-cols-3">
+      <h2 className="mt-6 w-full text-[18px] leading-7 font-semibold tracking-[-0.36px] text-white">
+        Quick Access
+      </h2>
+      <section className="mt-4 grid w-full gap-4 md:grid-cols-3">
         {cards.map((card) => (
           <article
             key={card.href}
             className="flex min-h-[240px] flex-col rounded-[16px] border border-shell-line bg-shell-raised p-4"
           >
             <img src={card.icon} alt="" width={20} height={20} />
-            <h2 className="mt-3 text-[16px] leading-6 font-medium tracking-[-0.16px] text-white">
+            <h3 className="mt-3 text-[16px] leading-6 font-medium tracking-[-0.16px] text-white">
               {card.title}
-            </h2>
-            <div className="mt-3 flex flex-1 flex-col gap-1 text-sm leading-5 text-[#a1a1aa]">
+            </h3>
+            <div className="mt-3 flex flex-1 flex-col gap-1 text-sm leading-5 text-[#5c5c5c]">
               {card.lines.map((line, index) => (
                 <p key={`${card.title}-${index}`} className="truncate">
                   {line}

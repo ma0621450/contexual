@@ -105,28 +105,24 @@ export function SettingsClient({ name: initialName, email }: Props) {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[720px] px-4 pt-10 pb-10 sm:px-6">
+    <div className="mx-auto w-full max-w-[1118px] px-4 pt-14 pb-10 sm:px-6">
     <form onSubmit={saveProfile}>
       <div className="flex flex-col items-center text-center">
-        <div className="relative">
-          <div className="flex size-24 items-center justify-center rounded-full bg-[#2a2a2a] text-2xl font-semibold text-white">
-            {initials(name)}
-          </div>
-          <button
-            type="button"
-            aria-label="Profile photo"
-            onClick={() =>
-              setPhotoMessage('Profile photos are not stored yet.')
-            }
-            className="absolute right-0 bottom-0 flex size-8 items-center justify-center rounded-full border border-white/10 bg-[#1c1c1c] text-white"
-          >
-            <CameraIcon className="size-3.5" />
-          </button>
-        </div>
-        <h1 className="mt-4 text-[22px] leading-7 font-semibold text-white">
+        <button
+          type="button"
+          aria-label="Profile photo"
+          onClick={() => setPhotoMessage('Profile photos are not stored yet.')}
+          className="group relative flex size-[88px] items-center justify-center overflow-hidden rounded-full bg-[#2a2a2a] text-2xl font-semibold text-white"
+        >
+          <span>{initials(name)}</span>
+          <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
+            <CameraIcon className="size-5" />
+          </span>
+        </button>
+        <h1 className="mt-4 text-[18px] leading-6 font-bold text-white">
           Profile Picture
         </h1>
-        <p className="mt-1 text-sm text-[#8b8b93]">
+        <p className="mt-1 text-sm text-[#737373]">
           Update your name and password.
         </p>
         {photoMessage ? (
@@ -134,35 +130,35 @@ export function SettingsClient({ name: initialName, email }: Props) {
         ) : null}
       </div>
 
-      <section className="mt-8 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-2 sm:px-6">
-        <h2 className="border-b border-white/10 py-4 text-sm font-medium text-white">
+      <section className="mt-12 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+        <h2 className="bg-white/[0.03] px-4 py-3 text-[13px] font-medium text-white">
           Account Information
         </h2>
-        <div className="flex items-center justify-between gap-4 border-b border-white/10 py-3">
-          <Label htmlFor="settings-name" className="text-sm text-white">
+        <div className="flex items-center justify-between gap-4 px-4 py-2">
+          <Label htmlFor="settings-name" className="text-[13px] font-normal text-white">
             Name
           </Label>
           <Input
             id="settings-name"
             value={name}
             onChange={(event) => setName(event.target.value)}
-            className="h-8 max-w-[240px] border-0 bg-transparent px-0 text-right text-sm text-[#d4d4d8] shadow-none focus-visible:ring-0"
+            className="h-8 max-w-[260px] border-0 bg-transparent px-0 text-right text-[13px] text-[#737373] shadow-none focus-visible:text-white focus-visible:ring-0"
           />
         </div>
-        <div className="flex items-center justify-between gap-4 py-4">
-          <span className="text-sm text-white">Email</span>
-          <span className="truncate text-sm text-[#d4d4d8]">{email}</span>
+        <div className="mx-4 flex items-center justify-between gap-4 border-t border-white/[0.06] py-3.5">
+          <span className="text-[13px] text-white">Email</span>
+          <span className="truncate text-[13px] text-white">{email}</span>
         </div>
       </section>
 
-      <section className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-2 sm:px-6">
-        <h2 className="border-b border-white/10 py-4 text-sm font-medium text-white">
-          Account Information
+      <section className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+        <h2 className="bg-white/[0.03] px-4 py-3 text-[13px] font-medium text-white">
+          Account Security
         </h2>
-        <div className="flex items-center justify-between gap-4 py-4">
+        <div className="flex items-center justify-between gap-4 px-4 py-4">
           <div>
-            <p className="text-sm text-white">Password</p>
-            <p className="mt-0.5 text-xs text-[#8b8b93]">Set a Unique Password</p>
+            <p className="text-[13px] text-white">Password</p>
+            <p className="mt-0.5 text-xs text-[#5c5c5c]">Set a Unique Password</p>
           </div>
           <Button
             type="button"
@@ -187,7 +183,7 @@ export function SettingsClient({ name: initialName, email }: Props) {
       <Button
         type="submit"
         disabled={pending !== null}
-        className="mt-5 h-9 rounded-lg bg-[#2a2a2a] px-4 text-white hover:bg-[#333333]"
+        className="mt-3 h-9 min-w-[120px] rounded-lg border border-white/10 bg-[#3a3a3a] px-5 text-white hover:bg-[#444444]"
       >
         {pending === 'profile' ? 'Saving…' : 'Save changes'}
       </Button>

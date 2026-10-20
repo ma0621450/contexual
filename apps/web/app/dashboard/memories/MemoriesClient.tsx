@@ -7,7 +7,7 @@ import {
   FileTextIcon,
   LoaderCircleIcon,
   SparklesIcon,
-  UploadIcon,
+  UploadCloudIcon,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api/client';
 import type { MemoryItem } from '@/lib/api/server';
@@ -247,9 +247,9 @@ export function MemoriesClient({ initialMemories, isAdmin }: Props) {
     (openMemory.scope === 'USER' || isAdmin);
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-[1070px] px-4 pt-8 pb-10 sm:px-6">
+    <div className="mx-auto w-full min-w-0 max-w-[1118px] px-4 pt-8 pb-10 sm:px-6">
       <div>
-        <h1 className="text-[32px] leading-10 font-semibold tracking-[-1.2px] text-white sm:text-[40px] sm:leading-[48px] sm:tracking-[-1.4px]">
+        <h1 className="text-[32px] leading-10 font-semibold tracking-[-1.2px] text-white sm:text-[48px] sm:leading-[56px] sm:tracking-[-1.92px]">
           Memories
         </h1>
         <p className="mt-1 text-[15px] leading-6 text-[#a1a1aa]">
@@ -318,14 +318,14 @@ export function MemoriesClient({ initialMemories, isAdmin }: Props) {
               type="button"
               onClick={() => importRef.current?.click()}
               disabled={saving}
-              className="h-9 rounded-lg border border-white/10 bg-[#2a2a2a] px-4 text-white hover:bg-[#333333]"
+              className="h-9 min-w-[108px] rounded-lg border border-white/15 bg-[#1f1f1f] px-5 text-white hover:bg-[#2a2a2a]"
             >
+              Upload
               {saving ? (
                 <LoaderCircleIcon className="animate-spin" />
               ) : (
-                <UploadIcon />
+                <UploadCloudIcon />
               )}
-              Upload
             </Button>
           </div>
         </div>
@@ -577,7 +577,7 @@ function MemorySection({
 }) {
   return (
     <section className="mt-8">
-      <div className="mb-3 flex items-center justify-between gap-3">
+      <div className="mb-4 flex items-center justify-between gap-3 border-b border-white/10 pb-2">
         <h2 className="text-[20px] font-medium text-white">{heading}</h2>
         {canAdd ? (
           <Button

@@ -60,7 +60,7 @@ export function JoinInviteForm() {
         <button
           type="submit"
           disabled={pending}
-          className="h-10 rounded-[10px] bg-white px-5 text-sm font-medium text-[#111111] outline-none hover:bg-white/90 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-60"
+          className="h-10 min-w-[58px] rounded-[10px] bg-[#2a2a2a] px-5 text-sm font-medium text-white outline-none hover:bg-[#333333] focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-60"
         >
           {pending ? 'Joining…' : 'Join'}
         </button>
