@@ -1,7 +1,13 @@
 'use client';
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -31,6 +37,8 @@ import {
   SlidersHorizontalIcon,
   Link2OffIcon,
   MicIcon,
+  ArrowLeftRightIcon,
+  GripVerticalIcon,
 } from 'lucide-react';
 import {
   streamChat,
@@ -116,6 +124,31 @@ const PROVIDER_LABELS: Record<string, string> = {
   GOOGLE: 'Google',
   XAI: 'xAI',
 };
+
+type HistorySide = 'left' | 'right';
+
+const HISTORY_SIDE_KEY = 'promplex.chat.historySide';
+const HISTORY_SIDE_EVENT = 'promplex-chat-history-side';
+
+function historySideSnapshot(): HistorySide {
+  return window.localStorage.getItem(HISTORY_SIDE_KEY) === 'left'
+    ? 'left'
+    : 'right';
+}
+
+function subscribeHistorySide(onStoreChange: () => void) {
+  window.addEventListener(HISTORY_SIDE_EVENT, onStoreChange);
+  window.addEventListener('storage', onStoreChange);
+  return () => {
+    window.removeEventListener(HISTORY_SIDE_EVENT, onStoreChange);
+    window.removeEventListener('storage', onStoreChange);
+  };
+}
+
+function storeHistorySide(side: HistorySide) {
+  window.localStorage.setItem(HISTORY_SIDE_KEY, side);
+  window.dispatchEvent(new Event(HISTORY_SIDE_EVENT));
+}
 
 function chatDayBucket(iso: string) {
   const date = new Date(iso);
@@ -271,6 +304,15 @@ export function ChatClient({
   const [historyOpen, setHistoryOpen] = useState(
     !publicView && initialConversations.length > 0,
   );
+  const historySide = useSyncExternalStore<HistorySide>(
+    subscribeHistorySide,
+    historySideSnapshot,
+    () => 'right',
+  );
+  const [historyDrag, setHistoryDrag] = useState<{
+    target: HistorySide;
+  } | null>(null);
+  const chatRootRef = useRef<HTMLDivElement>(null);
   const [creatingProject, setCreatingProject] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [error, setError] = useState('');
@@ -1650,6 +1692,80 @@ export function ChatClient({
     }
   }
 
+  function startHistoryDrag(event: React.PointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+    const root = chatRootRef.current;
+    if (!root) return;
+    event.preventDefault();
+    const bounds = root.getBoundingClientRect();
+    const startX = event.clientX;
+    const midpoint = bounds.left + bounds.width / 2;
+    let moved = false;
+
+    const sideAt = (x: number): HistorySide => (x < midpoint ? 'left' : 'right');
+    const onMove = (move: PointerEvent) => {
+      if (!moved && Math.abs(move.clientX - startX) < 6) return;
+      moved = true;
+      setHistoryDrag({ target: sideAt(move.clientX) });
+    };
+    const finish = (commit: boolean, x: number) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('keydown', onKey);
+      setHistoryDrag(null);
+      if (commit && moved) storeHistorySide(sideAt(x));
+    };
+    const onUp = (up: PointerEvent) => finish(true, up.clientX);
+    const onCancel = () => finish(false, startX);
+    const onKey = (key: KeyboardEvent) => {
+      if (key.key === 'Escape') finish(false, startX);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('keydown', onKey);
+  }
+
+  const otherHistorySide: HistorySide =
+    historySide === 'left' ? 'right' : 'left';
+
+  const historyToolbar = (
+    <div className="flex items-center justify-between gap-2 px-3 pt-3">
+      <button
+        type="button"
+        onPointerDown={startHistoryDrag}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowLeft') {
+            event.preventDefault();
+            storeHistorySide('left');
+          } else if (event.key === 'ArrowRight') {
+            event.preventDefault();
+            storeHistorySide('right');
+          }
+        }}
+        aria-label="Drag to move chat history. Use the arrow keys to pick a side."
+        title="Drag to the other side"
+        className="hidden h-7 cursor-grab touch-none items-center gap-1.5 rounded-lg px-1.5 text-[11px] font-medium tracking-[0.08em] text-[#737373] uppercase transition hover:bg-white/[0.05] hover:text-white focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none active:cursor-grabbing md:flex"
+      >
+        <GripVerticalIcon className="size-3.5" />
+        History
+      </button>
+      <p className="px-1.5 text-[11px] font-medium tracking-[0.08em] text-[#737373] uppercase md:hidden">
+        History
+      </p>
+      <button
+        type="button"
+        onClick={() => storeHistorySide(otherHistorySide)}
+        aria-label={`Move chat history to the ${otherHistorySide}`}
+        title={`Move to the ${otherHistorySide}`}
+        className="flex size-7 items-center justify-center rounded-lg text-[#737373] transition hover:bg-white/[0.05] hover:text-white focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none"
+      >
+        <ArrowLeftRightIcon className="size-3.5" />
+      </button>
+    </div>
+  );
+
   const historyCluster = (label: string) => (
     <div className="flex items-center gap-2 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-1.5">
       <button
@@ -1683,7 +1799,8 @@ export function ChatClient({
 
   const conversationList = (
     <>
-      <div className="space-y-2 p-3">
+      {historyToolbar}
+      <div className="space-y-2 px-3 pt-2 pb-3">
         {activeProject ? (
           <div className="flex items-center gap-1">
             <Button
@@ -1942,34 +2059,82 @@ export function ChatClient({
 
   return (
     <div
+      ref={chatRootRef}
       className={cn(
-        'flex w-full overflow-hidden',
+        'relative flex w-full overflow-hidden',
         publicView ? 'h-screen' : 'h-full',
+        historyDrag && 'cursor-grabbing select-none',
       )}
     >
       {!publicView ? (
         <aside
+          data-history-side={historySide}
           className={cn(
-            'order-last hidden shrink-0 overflow-hidden transition-[width,padding] duration-300 ease-out md:flex',
+            'hidden shrink-0 overflow-hidden transition-[width,padding,opacity] duration-300 ease-out md:flex',
+            historySide === 'left' ? 'order-first' : 'order-last',
             historyOpen ? 'w-[292px] p-3' : 'w-0 p-0',
+            historyDrag && 'opacity-60',
           )}
           aria-hidden={!historyOpen}
+          aria-label="Chat history"
         >
-          <div className="flex h-full min-h-0 w-[268px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+          <div
+            key={historySide}
+            className={cn(
+              'flex h-full min-h-0 w-[268px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] duration-300 animate-in fade-in-0',
+              historySide === 'left'
+                ? 'slide-in-from-right-6'
+                : 'slide-in-from-left-6',
+            )}
+          >
             {conversationList}
           </div>
         </aside>
       ) : null}
 
+      {historyDrag ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-40 grid grid-cols-2 gap-3 p-3"
+        >
+          {(['left', 'right'] as const).map((side) => (
+            <div
+              key={side}
+              className={cn(
+                'flex items-center justify-center rounded-2xl border-2 border-dashed text-sm font-medium backdrop-blur-sm transition-all duration-200',
+                historyDrag.target === side
+                  ? 'border-white/50 bg-[#1a1a1a]/85 text-white'
+                  : 'border-white/10 bg-[#111111]/60 text-[#737373]',
+              )}
+            >
+              Drop to keep history on the {side}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       {!publicView && sidebarOpen ? (
-        <div className="fixed inset-0 z-50 flex justify-end md:hidden">
+        <div
+          className={cn(
+            'fixed inset-0 z-50 flex md:hidden',
+            historySide === 'left' ? 'justify-start' : 'justify-end',
+          )}
+        >
           <button
             type="button"
             aria-label="Close conversation list"
             onClick={() => setSidebarOpen(false)}
             className="absolute inset-0 bg-foreground/25 backdrop-blur-[2px]"
           />
-          <aside className="relative flex h-full w-72 max-w-[85%] flex-col border-l border-white/10 bg-[#111111] shadow-elevated">
+          <aside
+            key={historySide}
+            className={cn(
+              'relative flex h-full w-72 max-w-[85%] flex-col border-white/10 bg-[#111111] shadow-elevated duration-300 animate-in',
+              historySide === 'left'
+                ? 'slide-in-from-left-full border-r'
+                : 'slide-in-from-right-full border-l',
+            )}
+          >
             {conversationList}
           </aside>
         </div>
@@ -2028,7 +2193,12 @@ export function ChatClient({
           <h1 className="sr-only">
             {activeConversation?.title ?? 'New chat'}
           </h1>
-          <div className="flex items-center gap-1">
+          <div
+            className={cn(
+              'flex items-center gap-1',
+              historySide === 'left' && 'ml-auto',
+            )}
+          >
           {messages.length > 0 && !readOnly ? (
             <>
               <Button
@@ -2098,7 +2268,12 @@ export function ChatClient({
           ) : null}
           </div>
           {!publicView ? (
-            <div className={cn('ml-auto', historyOpen && 'md:hidden')}>
+            <div
+              className={cn(
+                historySide === 'left' ? 'order-first' : 'ml-auto',
+                historyOpen && 'md:hidden',
+              )}
+            >
               {historyCluster('New Chat')}
             </div>
           ) : null}
